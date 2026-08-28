@@ -38,7 +38,7 @@
 ```bash
 cd ~/.config/DankMaterialShell/plugins
 git clone https://github.com/Lemon-mon-254/dms-plugin-Lyrics.git LyricsEmbed
-dms ipc call plugins reload LyricsEmbed
+dms ipc call plugins reload lyrics
 ```
 
 > 若 `dms ipc plugins reload` 无效，重启 DankMaterialShell 使插件生效。

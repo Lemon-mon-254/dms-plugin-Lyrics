@@ -1,11 +1,12 @@
 {
   "id": "lyrics",
   "name": "LyricsEmbed",
-  "description": "内嵌歌词优先的同步歌词插件：内嵌提取、多源歌词、双语分栏、偏移微调",
+  "description": "An embedded-lyrics-first synced lyrics plugin for DMS. 内嵌歌词优先的同步歌词插件：内嵌提取、多源歌词、双语分栏、偏移微调",
   "version": "1.7.0",
   "author": "lemonmon",
   "icon": "lyrics",
   "type": "widget",
+  "capabilities": ["dankbar-widget"],
   "component": "./Lyrics.qml",
   "settings": "./LyricsSettings.qml",
   "permissions": ["settings_read", "settings_write", "process", "network"]
