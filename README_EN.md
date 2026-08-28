@@ -47,7 +47,7 @@ The setting applies to the plugin UI including the settings page immediately.
 ```bash
 cd ~/.config/DankMaterialShell/plugins
 git clone https://github.com/Lemon-mon-254/dms-plugin-Lyrics.git LyricsEmbed
-dms ipc call plugins reload lyrics
+dms ipc call plugins reload lyricsEmbed
 ```
 
 > If `dms ipc plugins reload` does not work, restart DankMaterialShell.

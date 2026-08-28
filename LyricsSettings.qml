@@ -8,7 +8,7 @@ import qs.Widgets
 
 PluginSettings {
     id: root
-    pluginId: "lyrics"
+    pluginId: "lyricsEmbed"
 
     // pluginData 快照（PluginSettings 基类未提供，此处自行维护）
     property var pluginData: ({})

@@ -15,7 +15,7 @@ import qs.Modules.Plugins
 
 PluginComponent {
     id: root
-    layerNamespacePlugin: "lyrics"
+    layerNamespacePlugin: "lyricsEmbed"
 
     // ============================================
     // 配置属性
