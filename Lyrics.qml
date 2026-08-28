@@ -28,6 +28,25 @@ PluginComponent {
     property string customApiMethod: pluginData.customApiMethod ?? "GET"
 
     // ============================================
+    // 插件语言（zh / en / auto=跟随系统）
+    // ============================================
+    property string language: pluginData.language ?? "auto"
+    onLanguageChanged: console.warn("[Lyrics] language -> " + root.language + " systemChinese=" + root._systemChinese)
+
+    // 系统是否为中文环境（auto 模式用）
+    readonly property bool _systemChinese: (Qt.locale().name || "").toLowerCase().startsWith("zh")
+        || (Quickshell.env("LANG") || "").toLowerCase().startsWith("zh")
+
+    // 英文界面开关（直接绑定 language，供属性绑定追踪）
+    readonly property bool isEnglish: {
+        var la = root.language;
+        if (la === "auto")
+            la = root._systemChinese ? "zh" : "en";
+        return la === "en";
+    }
+    onIsEnglishChanged: console.warn("[Lyrics] isEnglish -> " + root.isEnglish)
+
+    // ============================================
     // MPRIS 播放器
     // ============================================
 
@@ -257,7 +276,7 @@ PluginComponent {
     // ============================================
     property string currentLyricText: {
         // 处理歌曲名：去掉括号及括号内容
-        var title = currentTitle || I18n.tr("暂无歌词");
+        var title = currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
         title = title.replace(/[（(].*?[）)]/g, "");  // 去掉括号及内容
         
         // 如果有歌词，显示"歌曲名 歌词"
@@ -1534,7 +1553,7 @@ PluginComponent {
         if (lyricsLines.length === 0 || currentLineIndex < 0 ||
             (currentLineIndex >= 0 && lyricsLines[currentLineIndex] &&
              _isInstrumentalMarker(lyricsLines[currentLineIndex].text)))
-            return currentTitle || I18n.tr("暂无歌词");
+            return currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
         return "";
     }
 
@@ -1546,47 +1565,47 @@ PluginComponent {
             [status.searching]: {
                 color: Theme.secondary,
                 icon: "hourglass_top",
-                label: I18n.tr("搜索中…")
+                label: root.isEnglish ? "Searching…" : "搜索中…"
             },
             [status.found]: {
                 color: Theme.primary,
                 icon: "check_circle",
-                label: I18n.tr("已找到 - 同步歌词")
+                label: root.isEnglish ? "Found - Synced Lyrics" : "已找到 - 同步歌词"
             },
             [status.notFound]: {
                 color: Theme.warning,
                 icon: "cancel",
-                label: I18n.tr("未找到")
+                label: root.isEnglish ? "Not Found" : "未找到"
             },
             [status.error]: {
                 color: Theme.error,
                 icon: "error",
-                label: I18n.tr("错误")
+                label: root.isEnglish ? "Error" : "错误"
             },
             [status.skippedConfig]: {
                 color: Theme.warning,
                 icon: "block",
-                label: I18n.tr("已跳过 - 未配置")
+                label: root.isEnglish ? "Skipped - Not Configured" : "已跳过 - 未配置"
             },
             [status.skippedFound]: {
                 color: Theme.warning,
                 icon: "block",
-                label: I18n.tr("已跳过 - 已找到")
+                label: root.isEnglish ? "Skipped - Found" : "已跳过 - 已找到"
             },
             [status.cacheHit]: {
                 color: Theme.primary,
                 icon: "check_circle",
-                label: I18n.tr("缓存命中 - 从缓存加载")
+                label: root.isEnglish ? "Cache Hit - From Cache" : "缓存命中 - 从缓存加载"
             },
             [status.cacheMiss]: {
                 color: Theme.warning,
                 icon: "cancel",
-                label: I18n.tr("缓存未命中")
+                label: root.isEnglish ? "Cache Miss" : "缓存未命中"
             },
             [status.cacheDisabled]: {
                 color: Theme.surfaceVariantText,
                 icon: "do_not_disturb_on",
-                label: I18n.tr("已禁用")
+                label: root.isEnglish ? "Disabled" : "已禁用"
             }
         })
 
@@ -1594,7 +1613,7 @@ PluginComponent {
         return _chipMeta[val] ?? {
             color: Theme.surfaceContainerHighest,
             icon: "radio_button_unchecked",
-            label: I18n.tr("空闲")
+            label: root.isEnglish ? "Idle" : "空闲"
         };
     }
 
@@ -1749,7 +1768,7 @@ PluginComponent {
                             if (root.lyricsLines.length === 0 ||
                                 (root.currentLineIndex >= 0 && root.lyricsLines[root.currentLineIndex] &&
                                  root._isInstrumentalMarker(root.lyricsLines[root.currentLineIndex].text))) {
-                                return root.currentTitle || I18n.tr("暂无歌词");
+                                return root.currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
                             }
                             return "";
                         }
@@ -1892,7 +1911,7 @@ PluginComponent {
                 }
 
                 StyledText {
-                    text: "网易"
+                    text: root.isEnglish ? "NetEase" : "网易"
                     font.pixelSize: 12
                     color: root._apiStatusColor(root.neteaseStatus)
                     font.weight: Font.Bold
@@ -1900,7 +1919,7 @@ PluginComponent {
                 }
             }
 
-            ToolTip.text: root.chipLabel(root.neteaseStatus)
+            ToolTip.text: root._chipMeta[root.neteaseStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
             ToolTip.visible: neteaseMouse.containsMouse
             ToolTip.delay: 500
 
@@ -1940,7 +1959,7 @@ PluginComponent {
                 }
             }
 
-            ToolTip.text: root.chipLabel(root.lrclibStatus)
+            ToolTip.text: root._chipMeta[root.lrclibStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
             ToolTip.visible: lrclibMouse.containsMouse
             ToolTip.delay: 500
 
@@ -1972,7 +1991,7 @@ PluginComponent {
                 }
 
                 StyledText {
-                    text: "缓存"
+                    text: root.isEnglish ? "Cache" : "缓存"
                     font.pixelSize: 12
                     color: root._apiStatusColor(root.cacheStatus)
                     font.weight: Font.Bold
@@ -1981,7 +2000,7 @@ PluginComponent {
             }
 
             ToolTip.text: root.cacheStatus === status.cacheHit ? 
-                I18n.tr("点击清除缓存并重新搜索") : root.chipLabel(root.cacheStatus)
+                root.isEnglish ? "Click to clear cache and re-search" : "点击清除缓存并重新搜索" : (root._chipMeta[root.cacheStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲"))
             ToolTip.visible: cacheMouse.containsMouse
             ToolTip.delay: 500
 
@@ -2482,7 +2501,7 @@ PluginComponent {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                             StyledText {
-                                text: I18n.tr("设置")
+                                text: root.isEnglish ? "Settings" : "设置"
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceText
                                 anchors.verticalCenter: parent.verticalCenter
@@ -2589,7 +2608,7 @@ PluginComponent {
                                 color: Theme.primary
                             }
 
-                            ToolTip.text: I18n.tr("保存歌词偏移")
+                            ToolTip.text: root.isEnglish ? "Save Lyrics Offset" : "保存歌词偏移"
                             ToolTip.visible: offsetSaveMA.containsMouse
                             ToolTip.delay: 500
                         }
@@ -2608,7 +2627,7 @@ PluginComponent {
                             }
                             cursorShape: Qt.PointingHandCursor
 
-                            ToolTip.text: I18n.tr("查看歌词文件")
+                            ToolTip.text: root.isEnglish ? "View Lyrics File" : "查看歌词文件"
                             ToolTip.visible: openCacheMA.containsMouse
                             ToolTip.delay: 500
 
@@ -2636,7 +2655,7 @@ PluginComponent {
                             }
                             cursorShape: Qt.PointingHandCursor
 
-                            ToolTip.text: scanLibRunning ? I18n.tr("导入中...") : I18n.tr("导入缓存")
+                            ToolTip.text: scanLibRunning ? root.isEnglish ? "Importing..." : "导入中..." : root.isEnglish ? "Import Lyrics" : "导入缓存"
                             ToolTip.visible: scanLibMA.containsMouse
                             ToolTip.delay: 500
 
@@ -2653,9 +2672,9 @@ PluginComponent {
 
                     // 导入缓存状态提示
                     StyledText {
-                        text: root.scanLibRunning ? I18n.tr("导入中...") :
-                              root.scanLibStatus === "ok" ? I18n.tr("导入成功") :
-                              root.scanLibStatus === "fail" ? I18n.tr("导入失败") : ""
+                        text: root.scanLibRunning ? root.isEnglish ? "Importing..." : "导入中..." :
+                              root.scanLibStatus === "ok" ? root.isEnglish ? "Import Succeeded" : "导入成功" :
+                              root.scanLibStatus === "fail" ? root.isEnglish ? "Import Failed" : "导入失败" : ""
                         font.pixelSize: Theme.fontSizeSmall
                         color: root.scanLibStatus === "fail" ? Theme.error : Theme.primary
                         visible: root.scanLibStatus !== ""
@@ -2683,9 +2702,9 @@ PluginComponent {
 
                 Repeater {
                     model: [
-                        [I18n.tr("中国时间"), 8],
-                        [I18n.tr("日本时间"), 9],
-                        [I18n.tr("太平洋时间"), root._pacificOffset()]
+                        [root.isEnglish ? "China" : "中国时间", 8],
+                        [root.isEnglish ? "Japan" : "日本时间", 9],
+                        [root.isEnglish ? "Pacific" : "太平洋时间", root._pacificOffset()]
                     ]
 
                     Rectangle {
@@ -2826,7 +2845,7 @@ PluginComponent {
                     }
 
                     StyledText {
-                        text: root.chipLabel(sourceCard.sourceStatus)
+                        text: root._chipMeta[sourceCard.sourceStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
                         font.pixelSize: Theme.fontSizeSmall - 1
                         color: root.chipColor(sourceCard.sourceStatus)
                         anchors.verticalCenter: parent.verticalCenter
@@ -2846,7 +2865,7 @@ PluginComponent {
 
                 StyledText {
                     anchors.centerIn: parent
-                    text: "空闲"
+                    text: root.isEnglish ? "Idle" : "空闲"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                 wrapMode: Text.NoWrap

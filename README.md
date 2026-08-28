@@ -2,6 +2,8 @@
 
 > 一款以 **内嵌歌词** 为核心的同步歌词插件，基于 [xubuyuan18/dms-plugin-Lyrics](https://github.com/xubuyuan18/dms-plugin-Lyrics) 二次开发，上游原作者为 [gasiyu/dms-plugin-musiclyrics](https://github.com/gasiyu/dms-plugin-musiclyrics)。
 
+**中文** | [English](README_EN.md)
+
 ![Version](https://img.shields.io/badge/version-1.7.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![DMS](https://img.shields.io/badge/DankMaterialShell-1.4+-purple)
