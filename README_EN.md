@@ -29,6 +29,10 @@
 - Blocklist filtering, player whitelist, world clock when idle
 - Firefox video / MV auto-detection
 
+## 📸 Screenshot
+
+![LyricsEmbed popup](docs/screenshot.png)
+
 ## Interface Language
 
 The plugin supports Chinese and English. Open the plugin **Settings → Language** and choose:
@@ -62,6 +66,8 @@ LyricsEmbed/
 ├── LyricsSettings.qml            # Settings UI
 ├── import-embedded-lyrics.sh     # Embedded lyric import script
 ├── plugin.json                   # Plugin config
+├── docs/
+│   └── screenshot.png            # Plugin screenshot
 ├── README.md
 └── LICENSE
 ```

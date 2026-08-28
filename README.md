@@ -33,6 +33,10 @@
 - 屏蔽词过滤、播放器白名单、未播放时世界时钟
 - 火狐浏览器视频 / MV 自动识别
 
+## 📸 截图
+
+![LyricsEmbed 弹窗](docs/screenshot.png)
+
 ## 📦 安装
 
 ```bash
@@ -57,6 +61,8 @@ LyricsEmbed/
 ├── LyricsSettings.qml            # 设置界面
 ├── import-embedded-lyrics.sh     # 内嵌歌词导入脚本（扫描按钮调用）
 ├── plugin.json                   # 插件配置
+├── docs/
+│   └── screenshot.png            # 插件截图
 ├── README.md
 └── LICENSE
 ```
