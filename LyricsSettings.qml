@@ -32,7 +32,6 @@ PluginSettings {
 
     // 设置页自身语言（跟随主组件）
     property string language: pluginData.language ?? "auto"
-    onLanguageChanged: console.warn("[LyricsSettings] language -> " + root.language)
     readonly property bool _systemChinese: (Qt.locale().name || "").toLowerCase().startsWith("zh")
         || (Quickshell.env("LANG") || "").toLowerCase().startsWith("zh")
 
@@ -43,7 +42,6 @@ PluginSettings {
             la = root._systemChinese ? "zh" : "en";
         return la === "en";
     }
-    onIsEnglishChanged: console.warn("[LyricsSettings] isEnglish -> " + root.isEnglish)
 
     StyledText {
         width: parent.width
@@ -394,9 +392,7 @@ PluginSettings {
         id: importLyricsProcess
         property string scriptPath: {
             var url = Qt.resolvedUrl("./import-embedded-lyrics.sh");
-            var path = url.toString().replace("file://", "");
-            console.warn("[Lyrics] Import script path: " + path);
-            return path;
+            return url.toString().replace("file://", "");
         }
         property string musicPath: pluginData.musicLibraryPath || (Quickshell.env("HOME") + "/Music")
 

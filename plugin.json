@@ -7,6 +7,7 @@
   "icon": "lyrics",
   "type": "widget",
   "capabilities": ["dankbar-widget"],
+  "requires_dms": ">=1.4.0",
   "component": "./Lyrics.qml",
   "settings": "./LyricsSettings.qml",
   "permissions": ["settings_read", "settings_write", "process", "network"]

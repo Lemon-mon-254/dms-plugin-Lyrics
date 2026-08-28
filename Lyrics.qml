@@ -31,7 +31,6 @@ PluginComponent {
     // 插件语言（zh / en / auto=跟随系统）
     // ============================================
     property string language: pluginData.language ?? "auto"
-    onLanguageChanged: console.warn("[Lyrics] language -> " + root.language + " systemChinese=" + root._systemChinese)
 
     // 系统是否为中文环境（auto 模式用）
     readonly property bool _systemChinese: (Qt.locale().name || "").toLowerCase().startsWith("zh")
@@ -44,7 +43,6 @@ PluginComponent {
             la = root._systemChinese ? "zh" : "en";
         return la === "en";
     }
-    onIsEnglishChanged: console.warn("[Lyrics] isEnglish -> " + root.isEnglish)
 
     // ============================================
     // MPRIS 播放器
@@ -722,7 +720,7 @@ PluginComponent {
                     currentXhr.setRequestHeader(key, customHeaders[key]);
                 }
             } else {
-                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.5.0");
+                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.0");
                 currentXhr.setRequestHeader("Accept", "application/json");
             }
 
@@ -859,13 +857,13 @@ PluginComponent {
         neteaseStatus = status.searching;
         console.info("[Lyrics] 网易云: 搜索 \"" + expectedTitle + "\"");
 
-        var searchUrl = "http://music.163.com/api/search/get/web?csrf_token=&hlpretag=&hlposttag=&s="
+        var searchUrl = "https://music.163.com/api/search/get/web?csrf_token=&hlpretag=&hlposttag=&s="
                       + encodeURIComponent(expectedTitle) + "&type=1&offset=0&total=true&limit=2";
 
         var customHeaders = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
             "Accept": "application/json, text/plain, */*",
-            "Referer": "http://music.163.com/"
+            "Referer": "https://music.163.com/"
         };
 
         root._cancelActiveFetch = _xhrRequest(searchUrl, "GET", 15000,
@@ -1313,6 +1311,37 @@ PluginComponent {
         return (t >= start && t < end) ? -7 : -8;
     }
 
+    // 解析 clockTimezones 设置（名称:偏移 逗号分隔），偏移可为数字或 auto（=太平洋夏令时）
+    readonly property var _clockTimezonesArr: {
+        const raw = (root.clockTimezones || "").trim();
+        if (!raw)
+            return [];
+        const out = [];
+        const parts = raw.split(/[,，;；]+/);
+        for (let i = 0; i < parts.length; i++) {
+            const seg = parts[i].trim();
+            if (!seg)
+                continue;
+            const idx = seg.lastIndexOf(":");
+            if (idx <= 0 || idx === seg.length - 1)
+                continue;
+            const name = seg.slice(0, idx).trim();
+            const offStr = seg.slice(idx + 1).trim().toLowerCase();
+            let off;
+            if (offStr === "auto" || offStr === "pacific")
+                off = root._pacificOffset();
+            else if (offStr === "utc" || offStr === "gmt")
+                off = 0;
+            else {
+                off = parseFloat(offStr);
+                if (isNaN(off))
+                    continue;
+            }
+            out.push([name, off]);
+        }
+        return out.length ? out : [[root.isEnglish ? "UTC" : "世界时间", 0]];
+    }
+
     // 换曲时重置同步状态，避免残留上一首的行索引和位置锚点
     // （由 onCurrentTitleChanged 统一触发，见 fetchDebounceTimer 处）
     function _resetLyricsForTrack() {
@@ -1633,7 +1662,6 @@ PluginComponent {
 
     horizontalBarPill: {
         const show = (root.hasPlayer || root.idleClock);
-        console.warn("[Lyrics:PILL] binding: hasPlayer=" + root.hasPlayer + " idleClock=" + root.idleClock + " show=" + show);
         return show ? hPillComponent : null;
     }
 
@@ -1646,9 +1674,6 @@ PluginComponent {
             readonly property bool dualMode: centered
             readonly property int fontSize: pluginData.lyricsFontSize || Theme.fontSizeMedium
             readonly property bool infoPaused: root.pausedState
-
-            Component.onCompleted: console.warn("[Lyrics:PILL] created idleClock=" + root.idleClock + " hasPlayer=" + root.hasPlayer + " centered=" + centered + " clockText=" + root.clockText())
-            onWidthChanged: console.warn("[Lyrics:PILL] width=" + width + " implicitWidth=" + implicitWidth)
 
             // 前奏阶段：正在播放但还没到第一句歌词
             readonly property bool introPhase: root.hasPlayer && root.isPlaying
@@ -2032,14 +2057,10 @@ PluginComponent {
     popoutContent: Component {
         PopoutComponent {
             width: popoutWidth
-            Component.onCompleted: console.warn("[Lyrics:POPOUT] PopoutComponent created idleClock=" + root.idleClock)
-            Component.onDestruction: console.warn("[Lyrics:POPOUT] PopoutComponent destroyed")
 
             Loader {
                 width: parent.width
                 sourceComponent: root.idleClock ? worldClockComponent : musicComponent
-                onLoaded: console.warn("[Lyrics:POPOUT] Loader loaded item=" + item + " idleClock=" + root.idleClock)
-                onImplicitHeightChanged: console.warn("[Lyrics:POPOUT] Loader implicitHeight=" + implicitHeight)
             }
         }
     }
@@ -2618,10 +2639,8 @@ PluginComponent {
                             width: 32; height: 32
                             anchors.verticalCenter: parent.verticalCenter
                             onClicked: {
-                                console.warn("[Lyrics] 查看缓存按钮: title='" + (root.currentTitle || "") + "' artist='" + (root.currentArtist || "") + "'");
                                 if (root.currentTitle) {
                                     var cachePath = root._cacheFilePath(root.currentTitle, root.currentArtist || "")
-                                    console.warn("[Lyrics] 缓存路径: " + cachePath)
                                     Quickshell.execDetached(["gio", "open", cachePath])
                                 }
                             }
@@ -2649,7 +2668,6 @@ PluginComponent {
                                 if (root.scanLibRunning) return
                                 var script = Qt.resolvedUrl("./import-embedded-lyrics.sh").toString().replace("file://", "")
                                 var libDir = root.musicLibraryPath
-                                console.warn("[Lyrics] 扫描音乐库: " + libDir + " script=" + script)
                                 scanLibProcess.command = ["bash", script, libDir]
                                 scanLibProcess.running = true
                             }
@@ -2693,7 +2711,6 @@ PluginComponent {
             property real cw: parent ? parent.width : 400
             width: cw
             implicitHeight: worldRow.implicitHeight
-            Component.onCompleted: console.warn("[Lyrics:CLOCK] worldClockComponent loaded, cw=" + cw + " parent=" + parent)
 
             Column {
                 id: worldRow
@@ -2701,11 +2718,7 @@ PluginComponent {
                 spacing: Theme.spacingS
 
                 Repeater {
-                    model: [
-                        [root.isEnglish ? "China" : "中国时间", 8],
-                        [root.isEnglish ? "Japan" : "日本时间", 9],
-                        [root.isEnglish ? "Pacific" : "太平洋时间", root._pacificOffset()]
-                    ]
+                    model: root._clockTimezonesArr
 
                     Rectangle {
                         width: wcRoot.cw

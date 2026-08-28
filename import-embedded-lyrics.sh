@@ -119,12 +119,15 @@ print(json.dumps(unique))
     fi
 
     # 写入缓存（保留已有 offset，避免覆盖手动校准的歌词偏移）
-    python3 -c "
+    LY_CACHE_FILE="$cache_file" && export LY_CACHE_FILE && printf '%s' "$lrc_lines" | python3 -c "
 import json
-lines = json.loads('''$lrc_lines''')
+import os
+import sys
+lines = json.load(sys.stdin)
+cache_file = os.environ['LY_CACHE_FILE']
 offset = 0
 try:
-    with open('$cache_file', encoding='utf-8') as f:
+    with open(cache_file, encoding='utf-8') as f:
         old = json.load(f)
     if isinstance(old.get('offset'), (int, float)):
         offset = old['offset']
@@ -136,7 +139,7 @@ data = {
     'cachedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     'offset': offset
 }
-with open('$cache_file', 'w', encoding='utf-8') as f:
+with open(cache_file, 'w', encoding='utf-8') as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
 " 2>/dev/null
 
