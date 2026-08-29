@@ -173,6 +173,13 @@ PluginSettings {
                 defaultValue: true
             }
 
+            ToggleSetting {
+                settingKey: "scrollWheelVolume"
+                label: root.isEnglish ? "Scroll Wheel Volume" : "滚轮调音量"
+                description: root.isEnglish ? "Scroll up/down on the status bar lyric pill to adjust the current player volume" : "在状态栏歌词胶囊上上下滚动鼠标滚轮调整当前播放器音量"
+                defaultValue: true
+            }
+
             StringSetting {
                 settingKey: "clockTimezones"
                 label: root.isEnglish ? "World Clock Timezones" : "世界时钟时区"

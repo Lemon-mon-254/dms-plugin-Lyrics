@@ -213,6 +213,7 @@ PluginComponent {
     property string clockTimezones: pluginData.clockTimezones ?? "中国时间:8,日本时间:9,太平洋时间:auto"
     property bool useAlbumAccent: pluginData.useAlbumAccent ?? true
     property bool showStatusIndicators: pluginData.showStatusIndicators ?? true
+    property bool scrollWheelVolume: pluginData.scrollWheelVolume ?? true
     readonly property color _cardAccent: root.useAlbumAccent ? MediaAccentService.accent : Theme.primary
     readonly property color _cardAccentTrack: Theme.withAlpha(root._cardAccent, 0.28)
     readonly property color _cardAccentSubtle: Theme.withAlpha(root._cardAccent, 0.55)
@@ -1784,8 +1785,28 @@ PluginComponent {
                      && root.lyricsLines[root.currentLineIndex]
                      && root._isInstrumentalMarker(root.lyricsLines[root.currentLineIndex].text)))
 
-            // 组件上滚轮调整系统音量（不拦截点击）
-            // MouseArea removed for debugging - check if it blocks click propagation
+            // 组件上滚轮调整播放器音量（不拦截点击）
+            MouseArea {
+                id: wheelVolumeArea
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+                onWheel: (wheel) => {
+                    if (!root.scrollWheelVolume || !root.activePlayer) return
+                    if (root.activePlayer.volumeSupported === false) return
+                    var step = 0
+                    if (wheel.pixelDelta && wheel.pixelDelta.y !== 0) {
+                        step = wheel.pixelDelta.y * 0.01
+                    } else if (wheel.angleDelta && wheel.angleDelta.y !== 0) {
+                        step = (wheel.angleDelta.y / 120) * 0.05
+                    }
+                    if (step === 0) return
+                    var cur = root.activePlayer.volume || 0
+                    var next = Math.min(1, Math.max(0, cur + step))
+                    root.activePlayer.volume = Math.round(next * 100) / 100
+                    wheel.accepted = true
+                }
+            }
 
             // 时钟固定宽度：以最宽占位串度量，数字变化不再抖动
             TextMetrics {
@@ -2495,6 +2516,8 @@ PluginComponent {
                                 repeat: true
                                 onTriggered: {
                                     root._forceUpdate = !root._forceUpdate;
+                                    if (pvSliderBox.visible && !pvSlider.isDragging && root.activePlayer)
+                                        pvSlider.value = Math.round((root.activePlayer.volume || 0) * 100);
                                 }
                             }
 
@@ -2535,6 +2558,38 @@ PluginComponent {
                                     font.weight: Font.Bold
                                     color: root._cardAccent
                                 }
+                            }
+
+                            // Volume slider - 显示并调整播放器音量
+                            Item {
+                                id: pvSliderBox
+                                width: parent.width
+                                height: 48
+                                visible: root.activePlayer && root.activePlayer.volumeSupported !== false
+
+                                DankSlider {
+                                    id: pvSlider
+                                    anchors.fill: parent
+                                    minimum: 0
+                                    maximum: 100
+                                    step: 1
+                                    showValue: false
+                                    leftIcon: "volume_down"
+                                    rightIcon: "volume_up"
+                                    trackColor: root._cardAccentTrack
+                                    onSliderValueChanged: (v) => {
+                                        if (root.activePlayer)
+                                            root.activePlayer.volume = v / 100;
+                                    }
+                                }
+
+                                function _syncFromPlayer() {
+                                    pvSlider.value = root.activePlayer
+                                        ? Math.round((root.activePlayer.volume || 0) * 100)
+                                        : 0;
+                                }
+
+                                Component.onCompleted: _syncFromPlayer()
                             }
 
                             // Playback controls - 放大但保持原有样式
