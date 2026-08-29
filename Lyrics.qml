@@ -211,6 +211,10 @@ PluginComponent {
 
     // 世界时钟时区配置（备份版用，格式："名称:偏移量" 逗号分隔）
     property string clockTimezones: pluginData.clockTimezones ?? "中国时间:8,日本时间:9,太平洋时间:auto"
+    property bool useAlbumAccent: pluginData.useAlbumAccent ?? true
+    readonly property color _cardAccent: root.useAlbumAccent ? MediaAccentService.accent : Theme.primary
+    readonly property color _cardAccentTrack: Theme.withAlpha(root._cardAccent, 0.28)
+    readonly property color _cardAccentSubtle: Theme.withAlpha(root._cardAccent, 0.55)
 
     // 屏蔽词：歌词包含任一关键词的行不显示
     readonly property var _blocklist: lyricBlocklist.split(/[,,、\s]+/)
@@ -1597,7 +1601,7 @@ PluginComponent {
                 label: root.isEnglish ? "Searching…" : "搜索中…"
             },
             [status.found]: {
-                color: Theme.primary,
+                color: root._cardAccent,
                 icon: "check_circle",
                 label: root.isEnglish ? "Found - Synced Lyrics" : "已找到 - 同步歌词"
             },
@@ -1622,7 +1626,7 @@ PluginComponent {
                 label: root.isEnglish ? "Skipped - Found" : "已跳过 - 已找到"
             },
             [status.cacheHit]: {
-                color: Theme.primary,
+                color: root._cardAccent,
                 icon: "check_circle",
                 label: root.isEnglish ? "Cache Hit - From Cache" : "缓存命中 - 从缓存加载"
             },
@@ -1777,7 +1781,7 @@ PluginComponent {
                         }
                         font.pixelSize: hPillRoot.fontSize
                         font.family: Theme.fontFamily
-                        color: root.idleClock ? Theme.primary : Theme.widgetTextColor
+                        color: root.idleClock ? root._cardAccent : Theme.widgetTextColor
                         font.weight: Font.Bold
                     wrapMode: Text.NoWrap
                     maximumLineCount: 1
@@ -1832,7 +1836,7 @@ PluginComponent {
                     }
                     font.pixelSize: hPillRoot.fontSize
                     font.family: Theme.fontFamily
-                    color: root.idleClock ? Theme.primary : Theme.widgetTextColor
+                    color: root.idleClock ? root._cardAccent : Theme.widgetTextColor
                     font.weight: Font.Bold
                     wrapMode: Text.NoWrap
                     maximumLineCount: 1
@@ -1895,7 +1899,7 @@ PluginComponent {
             DankIcon {
                 name: "lyrics"
                 size: Theme.iconSize
-                color: root.lyricsLines.length > 0 ? Theme.primary : Theme.widgetTextColor
+                color: root.lyricsLines.length > 0 ? root._cardAccent : Theme.widgetTextColor
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
@@ -2201,7 +2205,7 @@ PluginComponent {
                                 name: root.activePlayer && root.activePlayer.playbackState === MprisPlaybackState.Playing
                                       ? "play_circle" : "pause_circle"
                                 size: Theme.iconSize
-                                color: root.activePlayer ? Theme.primary : Theme.surfaceVariantText
+                                color: root.activePlayer ? root._cardAccent : Theme.surfaceVariantText
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
@@ -2215,7 +2219,7 @@ PluginComponent {
                                 }
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.DemiBold
-                                color: root.activePlayer ? Theme.primary : Theme.surfaceVariantText
+                                color: root.activePlayer ? root._cardAccent : Theme.surfaceVariantText
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
@@ -2299,75 +2303,61 @@ PluginComponent {
                             visible: root.activePlayer && root.currentDuration > 0
 
                         // ============================================
-                        // macOS Style Progress Bar
+                        // DMS Wave Progress (M3WaveProgress)
                         // ============================================
-                        // 设计说明：
-                        // - 宽度：与父容器对齐，占满可用空间
-                        // - 轨道高度：16px，较粗的视觉效果
-                        // - 中间圆点：比轨道稍大（20px），突出显示当前位置
-                        // - 点击/拖动：支持跳转播放位置
+                        // 与 DMS 自带媒体面板一致的动态波浪进度条：
+                        // - 播放时正弦波浪随 FrameAnimation 逐帧流动
+                        // - 已播放部分用 accent 色填充，未播放为半透明轨道
+                        // - 播放头为圆头 pill，拖动时实时预览，松手才 seek
                         // ============================================
-                        Item {
+                        M3WaveProgress {
                             id: macProgressBar
-                                width: parent.width
-                                height: 32
-                                anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width
+                            height: 32
+                            anchors.horizontalCenter: parent.horizontalCenter
 
-                                // 使用 _forceUpdate 触发重新计算进度
-                                property real progress: {
-                                    void root._forceUpdate; // 依赖轮询触发更新
-                                    if (!root.activePlayer || !root.activePlayer.length) return 0;
-                                    return Math.min(1, (root.activePlayer.position || 0) / root.activePlayer.length);
-                                }
-
-                                // Background track - 轨道背景（16px 高度）
-                                Rectangle {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width
-                                    height: 16
-                                    radius: 8
-                                    color: Theme.surfaceContainerHighest
-                                }
-
-                                // Progress fill - 进度填充（与轨道同高）
-                                Rectangle {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.left: parent.left
-                                    width: parent.width * macProgressBar.progress
-                                    height: 16
-                                    radius: 8
-                                    color: Theme.primary
-                                }
-
-                                // Progress handle - 进度圆点（20px，比轨道稍大）
-                                Rectangle {
-                                    id: progressHandle
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    // 圆点中心与进度填充的右边缘对齐
-                                    x: parent.width * macProgressBar.progress - width / 2
-                                    width: 20
-                                    height: 20
-                                    radius: 10
-                                    color: Theme.surface
-                                    border.color: Theme.outlineVariant
-                                    border.width: 1
-                                }
-
-                                // Click and drag to seek - 点击拖动跳转
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: (mouse) => {
-                                        if (!root.activePlayer || !root.activePlayer.length) return;
-                                        var newProgress = Math.max(0, Math.min(1, mouse.x / parent.width));
-                                        root.activePlayer.position = newProgress * root.activePlayer.length;
-                                    }
-                                    onPositionChanged: (mouse) => {
-                                        if (!pressed || !root.activePlayer || !root.activePlayer.length) return;
-                                        var newProgress = Math.max(0, Math.min(1, mouse.x / parent.width));
-                                        root.activePlayer.position = newProgress * root.activePlayer.length;
-                                    }
-                                }
+                            readonly property real ratio: {
+                                void root._forceUpdate; // 依赖轮询触发更新
+                                if (!root.activePlayer || !root.activePlayer.length) return 0;
+                                return Math.min(1, (root.activePlayer.position || 0) / root.activePlayer.length);
                             }
+                            property real dragRatio: -1
+
+                            value: dragRatio >= 0 ? dragRatio : ratio
+                            actualValue: ratio
+                            showActualPlaybackState: waveMouse.pressed
+                            isPlaying: root.activePlayer && root.activePlayer.playbackState === MprisPlaybackState.Playing
+                            fillColor: root._cardAccent
+                            playheadColor: root._cardAccent
+                            trackColor: root._cardAccentTrack
+                            actualProgressColor: root._cardAccentSubtle
+
+                            MouseArea {
+                                id: waveMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                enabled: root.activePlayer && root.activePlayer.canSeek && root.activePlayer.length > 0
+
+                                onPressed: (mouse) => {
+                                    if (!root.activePlayer) return;
+                                    macProgressBar.dragRatio = Math.max(0, Math.min(1, mouse.x / parent.width));
+                                }
+                                onPositionChanged: (mouse) => {
+                                    if (pressed && root.activePlayer)
+                                        macProgressBar.dragRatio = Math.max(0, Math.min(1, mouse.x / parent.width));
+                                }
+                                onReleased: (mouse) => {
+                                    if (!root.activePlayer) return;
+                                    macProgressBar.dragRatio = -1;
+                                    if (root.activePlayer.canSeek && root.activePlayer.length > 0) {
+                                        const target = mouse.x / parent.width * root.activePlayer.length;
+                                        root.activePlayer.position = Math.max(0.1, Math.min(target, root.activePlayer.length * 0.99));
+                                    }
+                                }
+                                onCanceled: macProgressBar.dragRatio = -1
+                            }
+                        }
 
                             // Poll MPRIS position to keep progress bar and time text updated
                             Timer {
@@ -2398,7 +2388,7 @@ PluginComponent {
                                     }
                                     font.pixelSize: Theme.fontSizeSmall - 1
                                     font.weight: Font.Bold
-                                    color: Theme.surfaceText
+                                    color: root._cardAccent
                                 }
 
                                 Item { width: parent.width - _currentTime.implicitWidth - _endTime.implicitWidth; height: 1 }
@@ -2415,7 +2405,7 @@ PluginComponent {
                                     }
                                     font.pixelSize: Theme.fontSizeSmall - 1
                                     font.weight: Font.Bold
-                                    color: Theme.surfaceText
+                                    color: root._cardAccent
                                 }
                             }
 
@@ -2440,7 +2430,7 @@ PluginComponent {
                                         anchors.centerIn: parent
                                         name: "skip_previous"
                                         size: 32
-                                        color: Theme.surfaceText
+                                        color: root._cardAccent
                                     }
                                 }
 
@@ -2461,7 +2451,7 @@ PluginComponent {
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 32
-                                        color: Theme.primary
+                                        color: root._cardAccent
                                         opacity: 0.1
                                     }
 
@@ -2469,7 +2459,7 @@ PluginComponent {
                                         anchors.centerIn: parent
                                         name: root.activePlayer && root.activePlayer.playbackState === MprisPlaybackState.Playing ? "pause" : "play_arrow"
                                         size: 40
-                                        color: Theme.primary
+                                        color: root._cardAccent
                                     }
                                 }
 
@@ -2487,7 +2477,7 @@ PluginComponent {
                                         anchors.centerIn: parent
                                         name: "skip_next"
                                         size: 32
-                                        color: Theme.surfaceText
+                                        color: root._cardAccent
                                     }
                                 }
                             }
@@ -2568,7 +2558,7 @@ PluginComponent {
                             text: (root.lyricsOffset >= 0 ? "+" : "") + root.lyricsOffset.toFixed(1) + "s"
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: "monospace"
-                            color: root.lyricsOffset !== 0 ? Theme.primary : Theme.surfaceVariantText
+                            color: root.lyricsOffset !== 0 ? root._cardAccent : Theme.surfaceVariantText
                             anchors.verticalCenter: parent.verticalCenter
                             width: 52
                             horizontalAlignment: Text.AlignHCenter
@@ -2626,7 +2616,7 @@ PluginComponent {
                             }
                             DankIcon {
                                 anchors.centerIn: parent; name: "save"; size: 16
-                                color: Theme.primary
+                                color: root._cardAccent
                             }
 
                             ToolTip.text: root.isEnglish ? "Save Lyrics Offset" : "保存歌词偏移"
@@ -2694,7 +2684,7 @@ PluginComponent {
                               root.scanLibStatus === "ok" ? root.isEnglish ? "Import Succeeded" : "导入成功" :
                               root.scanLibStatus === "fail" ? root.isEnglish ? "Import Failed" : "导入失败" : ""
                         font.pixelSize: Theme.fontSizeSmall
-                        color: root.scanLibStatus === "fail" ? Theme.error : Theme.primary
+                        color: root.scanLibStatus === "fail" ? Theme.error : root._cardAccent
                         visible: root.scanLibStatus !== ""
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
@@ -2770,7 +2760,7 @@ PluginComponent {
                 return Theme.warning;    // 搜索中状态使用主题警告色
             case status.found:
             case status.cacheHit:
-                return Theme.primary;    // 找到和缓存命中使用主题主色
+                return root._cardAccent;    // 找到和缓存命中使用主色
             case status.none:
             case status.skippedConfig:
             default:

@@ -159,6 +159,13 @@ PluginSettings {
                 defaultValue: false
             }
 
+            ToggleSetting {
+                settingKey: "useAlbumAccent"
+                label: root.isEnglish ? "Card Colors Follow Album Art" : "卡片颜色跟随封面"
+                description: root.isEnglish ? "Use the album art dominant color for popup card accents (play buttons, timeline, time text, clocks). Turn off to follow the theme color" : "弹窗卡片重点元素（播放按钮、进度条、时间、时钟等）使用当前封面主色；关闭则跟随主题颜色"
+                defaultValue: true
+            }
+
             StringSetting {
                 settingKey: "clockTimezones"
                 label: root.isEnglish ? "World Clock Timezones" : "世界时钟时区"
