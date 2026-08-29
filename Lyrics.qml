@@ -1789,7 +1789,6 @@ PluginComponent {
             MouseArea {
                 id: wheelVolumeArea
                 anchors.fill: parent
-                hoverEnabled: true
                 acceptedButtons: Qt.NoButton
                 onWheel: (wheel) => {
                     if (!root.scrollWheelVolume || !root.activePlayer) return
