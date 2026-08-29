@@ -212,6 +212,7 @@ PluginComponent {
     // 世界时钟时区配置（备份版用，格式："名称:偏移量" 逗号分隔）
     property string clockTimezones: pluginData.clockTimezones ?? "中国时间:8,日本时间:9,太平洋时间:auto"
     property bool useAlbumAccent: pluginData.useAlbumAccent ?? true
+    property bool showStatusIndicators: pluginData.showStatusIndicators ?? true
     readonly property color _cardAccent: root.useAlbumAccent ? MediaAccentService.accent : Theme.primary
     readonly property color _cardAccentTrack: Theme.withAlpha(root._cardAccent, 0.28)
     readonly property color _cardAccentSubtle: Theme.withAlpha(root._cardAccent, 0.55)
@@ -278,7 +279,9 @@ PluginComponent {
     // ============================================
     property string currentLyricText: {
         // 处理歌曲名：去掉括号及括号内容
-        var title = currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
+        var title = currentTitle || (root.pureInstrumental
+            ? (root.isEnglish ? "Instrumental" : "纯音乐")
+            : (root.isEnglish ? "No Lyrics" : "暂无歌词"));
         title = title.replace(/[（(].*?[）)]/g, "");  // 去掉括号及内容
         
         // 如果有歌词，显示"歌曲名 歌词"
@@ -287,6 +290,17 @@ PluginComponent {
         }
         return title;
     }
+
+    // 是否有任何可用的在线歌词源
+    readonly property bool onlineSourcesEnabled: neteaseEnabled || lrclibEnabled
+        || (customApiEnabled && customApiUrl && customApiUrl.trim() !== "")
+
+    // 当前曲目是否为纯音乐：
+    // - 无歌词 且 标题/歌手带纯音乐标记；或
+    // - 无歌词 且 用户关闭了全部在线源（此时无缓存即视为纯音乐）
+    readonly property bool pureInstrumental: !lyricsLoading
+        && lyricsLines.length === 0
+        && (_isInstrumentalIdentity(currentTitle, currentArtist) || !root.onlineSourcesEnabled)
 
     // ============================================
     // 定时器
@@ -426,6 +440,28 @@ PluginComponent {
             var cb = callback
             callback = null
             if (cb) cb(null)
+        }
+    }
+
+    // 缓存文件探测: 仅判断是否存在，不读取内容
+    FileView {
+        id: cacheProbe
+        property string probePath: ""
+        watchChanges: false
+        onLoaded: {
+            var p = probePath
+            probePath = ""
+            if (!p) return
+            // micro.desktop 声明 Terminal=true，niri 下 gio open 无法启动；
+            // 直接用 kitty 打开 micro 查看歌词 json
+            Quickshell.execDetached(["kitty", "--class", "lyrics-cache", "-e", "micro", p])
+        }
+        onLoadFailed: {
+            if (probePath) {
+                console.warn("[Lyrics] 缓存文件不存在，打开缓存目录: " + probePath)
+                Quickshell.execDetached(["gio", "open", root._cacheDir])
+                probePath = ""
+            }
         }
     }
 
@@ -615,6 +651,10 @@ PluginComponent {
             }
 
             root.cacheStatus = status.cacheMiss;
+            if (!root.onlineSourcesEnabled) {
+                root._setFinalNotFound(status.notFound);
+                return;
+            }
             _startFetchFromSources(title, artist);
         });
     }
@@ -641,6 +681,10 @@ PluginComponent {
      * 从各源获取歌词（网易云优先）
      */
     function _startFetchFromSources(title, artist) {
+        if (!root.onlineSourcesEnabled) {
+            root._setFinalNotFound(status.notFound);
+            return;
+        }
         if (neteaseEnabled) {
             _fetchFromNetease(title, artist);
         } else {
@@ -1055,10 +1099,18 @@ PluginComponent {
                     return;
                 }
                 root.cacheStatus = status.cacheMiss;
+                if (!root.onlineSourcesEnabled) {
+                    root._setFinalNotFound(status.notFound);
+                    return;
+                }
                 _fetchFromLrclib(title, artist);
             });
         } else {
             cacheStatus = status.cacheDisabled;
+            if (!root.onlineSourcesEnabled) {
+                root._setFinalNotFound(status.notFound);
+                return;
+            }
             _fetchFromLrclib(title, artist);
         }
     }
@@ -1203,17 +1255,23 @@ PluginComponent {
     function _isInstrumentalMarker(text) {
         if (!text || text.trim() === "") return false;
 
-        var normalized = text.toLowerCase().replace(/[\s,，]+/g, "").trim();
+        var normalized = text.toLowerCase().replace(/[\s,，。、;；:：!！?？]+/g, "").trim();
 
         // 中文纯音乐标记
         var instrumentalPatterns = [
             "纯音乐请欣赏",
             "纯音乐",
+            "纯乐器",
+            "无歌词",
+            "暂无歌词",
+            "纯音",
+            "音轨",
             "instrumental",
             "musiconly",
             "nomusic",
-            "无歌词",
-            "暂无歌词"
+            "インスト",
+            "演奏のみ",
+            "instrumentmusik"
         ];
 
         for (var i = 0; i < instrumentalPatterns.length; i++) {
@@ -1222,6 +1280,39 @@ PluginComponent {
             }
         }
 
+        return false;
+    }
+
+    /**
+     * 根据标题/艺术家判断是否为纯音乐（无歌词曲目）
+     * 匹配 Instrumental / 纯音乐 / BGM / OST / 主题曲 等常见标记
+     */
+    function _isInstrumentalIdentity(title, artist) {
+        var hay = ((title || "") + " " + (artist || "")).toLowerCase();
+        if (!hay.trim()) return false;
+        var patterns = [
+            "pure instrumental",
+            "instrumental",
+            "纯音乐",
+            "纯乐器",
+            "bgm",
+            "original soundtrack",
+            "original sound track",
+            "\bost\b",
+            "サウンドトラック",
+            "メインテーマ",
+            "ピアノソロ",
+            "piano solo",
+            "piano piece",
+            "music box",
+            "演奏のみ",
+            "インスト"
+        ];
+        for (var j = 0; j < patterns.length; j++) {
+            if (hay.indexOf(patterns[j]) !== -1) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -1586,7 +1677,9 @@ PluginComponent {
         if (lyricsLines.length === 0 || currentLineIndex < 0 ||
             (currentLineIndex >= 0 && lyricsLines[currentLineIndex] &&
              _isInstrumentalMarker(lyricsLines[currentLineIndex].text)))
-            return currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
+            return currentTitle || (root.pureInstrumental
+                ? (root.isEnglish ? "Instrumental" : "纯音乐")
+                : (root.isEnglish ? "No Lyrics" : "暂无歌词"));
         return "";
     }
 
@@ -1797,7 +1890,9 @@ PluginComponent {
                             if (root.lyricsLines.length === 0 ||
                                 (root.currentLineIndex >= 0 && root.lyricsLines[root.currentLineIndex] &&
                                  root._isInstrumentalMarker(root.lyricsLines[root.currentLineIndex].text))) {
-                                return root.currentTitle || (root.isEnglish ? "No Lyrics" : "暂无歌词");
+                                return root.currentTitle || (root.pureInstrumental
+                                    ? (root.isEnglish ? "Instrumental" : "纯音乐")
+                                    : (root.isEnglish ? "No Lyrics" : "暂无歌词"));
                             }
                             return "";
                         }
@@ -1919,8 +2014,40 @@ PluginComponent {
         id: apiIndicators
         spacing: 8
 
+        // 纯音乐识别指示器（无歌词且标题/歌手带纯音乐标记时覆盖各源状态）
+        Rectangle {
+            visible: root.pureInstrumental
+            width: 96
+            height: 28
+            radius: 6
+            color: Theme.withAlpha(Theme.tertiary, 0.25)
+            border.color: Theme.tertiary
+            border.width: 1
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 4
+
+                DankIcon {
+                    name: "music_off"
+                    size: Theme.iconSizeSmall
+                    color: Theme.tertiary
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                StyledText {
+                    text: root.isEnglish ? "Instrumental" : "纯音乐"
+                    font.pixelSize: 12
+                    color: Theme.tertiary
+                    font.weight: Font.Bold
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+
         // 网易云指示器 - 带图标的圆角矩形（优先显示）
         Rectangle {
+            visible: !root.pureInstrumental
             width: 64
             height: 28
             radius: 6
@@ -1961,6 +2088,7 @@ PluginComponent {
 
         // lrclib 指示器 - 带图标的圆角矩形
         Rectangle {
+            visible: !root.pureInstrumental
             width: 64
             height: 28
             radius: 6
@@ -2287,7 +2415,7 @@ PluginComponent {
 
                         // API 状态指示器 - 移动到歌曲信息下方，左对齐
                         ApiStatusIndicators {
-                            visible: root.activePlayer
+                            visible: root.activePlayer && root.showStatusIndicators
                         }
 
                         // Spacer to ensure vertical separation from cover art
@@ -2631,7 +2759,9 @@ PluginComponent {
                             onClicked: {
                                 if (root.currentTitle) {
                                     var cachePath = root._cacheFilePath(root.currentTitle, root.currentArtist || "")
-                                    Quickshell.execDetached(["gio", "open", cachePath])
+                                    root.cacheProbe.probePath = cachePath
+                                    root.cacheProbe.path = cachePath
+                                    root.cacheProbe.load()
                                 }
                             }
                             cursorShape: Qt.PointingHandCursor

@@ -166,6 +166,13 @@ PluginSettings {
                 defaultValue: true
             }
 
+            ToggleSetting {
+                settingKey: "showStatusIndicators"
+                label: root.isEnglish ? "Show Source Status Chips" : "显示歌曲来源状态标签"
+                description: root.isEnglish ? "Show the NetEase / LRC / Cache / Instrumental status chips in the popup card" : "在弹窗卡片中显示网易 / LRC / 缓存 / 纯音乐 的状态标签"
+                defaultValue: true
+            }
+
             StringSetting {
                 settingKey: "clockTimezones"
                 label: root.isEnglish ? "World Clock Timezones" : "世界时钟时区"
