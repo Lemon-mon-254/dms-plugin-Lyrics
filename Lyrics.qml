@@ -334,38 +334,90 @@ PluginComponent {
         return _fnv1a32((title + "\x00" + artist).toLowerCase());
     }
 
-    function _cacheFilePath(title, artist) {
-        return _cacheDir + "/" + _cacheKey(title, artist) + ".json";
+    function _sanitizeFilename(s) {
+        if (!s) return "";
+        var out = s.replace(/[\\\/\u0000-\u001f\u007f]/g, "_");
+        out = out.trim();
+        if (out.charAt(0) === ".") out = "_" + out.slice(1);
+        if (out === "") out = "untitled";
+        return out;
     }
 
-    FileView {
-        id: cacheReader
-        property var callback
-        watchChanges: false
-        onLoaded: {
-            var cb = callback
-            callback = null
-            if (!cb) return
-            try {
-                cb(JSON.parse(text()))
-            } catch (e) {
-                console.warn("[Lyrics] 缓存JSON解析失败: " + e)
-                cb(null)
+    function _utf8ByteLength(s) {
+        var bytes = 0;
+        for (var i = 0; i < s.length; i++) {
+            var c = s.charCodeAt(i);
+            if (c < 0x80) bytes += 1;
+            else if (c < 0x800) bytes += 2;
+            else if (c >= 0xD800 && c <= 0xDBFF) {
+                if (i + 1 < s.length) {
+                    var d = s.charCodeAt(i + 1);
+                    if (d >= 0xDC00 && d <= 0xDFFF) { bytes += 4; i++; continue; }
+                }
+                bytes += 3;
+            }
+            else bytes += 3;
+        }
+        return bytes;
+    }
+
+    function _truncateUtf8Bytes(s, maxBytes) {
+        if (_utf8ByteLength(s) <= maxBytes) return s;
+        var out = "";
+        for (var i = 0; i < s.length;) {
+            var c = s.charCodeAt(i);
+            var n;
+            if (c < 0x80) n = 1;
+            else if (c < 0x800) n = 2;
+            else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+                var d = s.charCodeAt(i + 1);
+                if (d >= 0xDC00 && d <= 0xDFFF) n = 4;
+                else n = 3;
+            }
+            else n = 3;
+            if (_utf8ByteLength(out) + n > maxBytes) break;
+            if (n === 4) {
+                var lo = s.charCodeAt(i + 1);
+                out += s.charAt(i) + String.fromCharCode(lo);
+                i += 2;
+            } else {
+                out += s.charAt(i);
+                i += 1;
             }
         }
-        onLoadFailed: {
-            var cb = callback
-            callback = null
-            if (cb) cb(null)
-        }
+        return out + "...";
+    }
+
+    function _cacheFilePath(title, artist) {
+        var key = _cacheKey(title, artist);
+        var readable = _sanitizeFilename(title) + " - " + _sanitizeFilename(artist);
+        readable = _truncateUtf8Bytes(readable, 190);
+        return _cacheDir + "/" + readable + "_" + key + ".json";
     }
 
 /**
      * 从缓存读取歌词
      */
     function readFromCache(title, artist, callback) {
-        cacheReader.callback = callback
-        cacheReader.path = _cacheFilePath(title, artist)
+        var newPath = _cacheFilePath(title, artist);
+        var oldPath = _cacheDir + "/" + _cacheKey(title, artist) + ".json";
+        var queue = newPath === oldPath ? [newPath] : [newPath, oldPath];
+        _readPathQueue(queue, callback, title, artist, newPath);
+    }
+    function _readPathQueue(paths, callback, title, artist, newPath) {
+        if (!callback) return;
+        if (!paths || paths.length === 0) {
+            callback(null);
+            return;
+        }
+        var reader = cacheReaderComponent.createObject(root, {
+            callback: callback,
+            pathQueue: paths.slice(1),
+            cTitle: title,
+            cArtist: artist,
+            cNewPath: newPath
+        });
+        reader.path = paths[0];
     }
     function writeToCache(title, artist, lines, source) {
         _ensureCacheDir();
@@ -381,12 +433,13 @@ PluginComponent {
     function clearCurrentCacheAndRefetch() {
         if (!currentTitle) return;
         
-        var cacheFile = _cacheFilePath(currentTitle, currentArtist);
+        var cacheFiles = [ _cacheFilePath(currentTitle, currentArtist),
+                           _cacheDir + "/" + _cacheKey(currentTitle, currentArtist) + ".json" ];
         console.info("[Lyrics] 清除缓存: \"" + currentTitle + "\"");
         
-        // 使用 Process 删除缓存文件
+        // 使用 Process 删除缓存文件（新可读名 + 旧 hash 名）
         var deleter = cacheDeleterProcessComponent.createObject(root, {
-            cacheFilePath: cacheFile
+            cacheFiles: cacheFiles
         });
         deleter.running = true;
     }
@@ -394,9 +447,9 @@ PluginComponent {
     Component {
         id: cacheDeleterProcessComponent
         Process {
-            property string cacheFilePath: ""
+            property var cacheFiles: []
             
-            command: ["rm", "-f", cacheFilePath]
+            command: ([]).concat(["rm", "-f"], cacheFiles)
             
             onExited: (exitCode, exitStatus) => {
                 console.info("[Lyrics] 缓存已清除，重新搜索...");
@@ -413,19 +466,35 @@ PluginComponent {
         id: cacheReaderComponent
         FileView {
             property var callback
+            property var pathQueue: []
+            property string cTitle: ""
+            property string cArtist: ""
+            property string cNewPath: ""
             blockLoading: true
             preload: true
             onLoaded: {
+                var cb = callback
+                callback = null
+                var data = null
                 try {
-                    callback(JSON.parse(text()));
+                    data = JSON.parse(text());
                 } catch (e) {
-                    callback(null);
+                    data = null;
                 }
+                if (data && cNewPath && path !== cNewPath) {
+                    // 命中的是旧 hash 名缓存：迁移一份到新可读名
+                    console.info("[Lyrics] 迁移缓存: " + _cacheDir + "/" + _cacheKey(cTitle, cArtist) + " → 可读名");
+                    root.writeToCache(cTitle, cArtist, data.lines, data.source);
+                }
+                if (cb) cb(data);
                 destroy();
             }
             onLoadFailed: {
-                callback(null);
+                var cb = callback;
+                var remain = pathQueue;
+                callback = null;
                 destroy();
+                root._readPathQueue(remain, cb, cTitle, cArtist, cNewPath);
             }
         }
     }
@@ -1606,6 +1675,7 @@ PluginComponent {
                 id: wheelVolumeArea
                 anchors.fill: parent
                 acceptedButtons: Qt.NoButton
+                cursorShape: Qt.PointingHandCursor
                 onWheel: (wheel) => {
                     if (!root.scrollWheelVolume || !root.activePlayer) return
                     if (root.activePlayer.volumeSupported === false) return
@@ -2645,6 +2715,8 @@ PluginComponent {
                             font.family: "monospace"
                             color: Theme.surfaceVariantText
                             anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideMiddle
+                            width: Math.min(implicitWidth, 220)
                             visible: text !== ""
                         }
                     }
