@@ -360,30 +360,12 @@ PluginComponent {
         }
     }
 
-    FileView {
-        id: cacheProbe
-        property string probePath: ""
-        watchChanges: false
-        onLoaded: {
-            var p = probePath
-            probePath = ""
-            if (!p) return
-            // micro.desktop 声明 Terminal=true，niri 下 gio open 无法启动；
-            // 直接用 kitty 打开 micro 查看歌词 json
-            Quickshell.execDetached(["kitty", "--class", "lyrics-cache", "-e", "micro", p])
-        }
-        onLoadFailed: {
-            if (probePath) {
-                console.warn("[Lyrics] 缓存文件不存在，打开缓存目录: " + probePath)
-                Quickshell.execDetached(["gio", "open", root._cacheDir])
-                probePath = ""
-            }
-        }
-    }
+/**
+     * 从缓存读取歌词
+     */
     function readFromCache(title, artist, callback) {
         cacheReader.callback = callback
         cacheReader.path = _cacheFilePath(title, artist)
-        cacheReader.load()
     }
     function writeToCache(title, artist, lines, source) {
         _ensureCacheDir();
@@ -1811,8 +1793,10 @@ PluginComponent {
                     text: {
                         if (hPillRoot.infoPaused || hPillRoot.introPhase || hPillRoot.instrumentalPhase || hPillRoot.blockedPhase)
                             return root.currentArtist || "";
-                        if (hPillRoot.dualMode)
-                            return root.currentPair?.trans ?? "";
+                        if (hPillRoot.dualMode) {
+                            var t = root.currentPair?.trans ?? "";
+                            return t || (root.currentPair?.orig ?? "");
+                        }
                         return "";
                     }
                     font.pixelSize: hPillRoot.fontSize
@@ -2605,59 +2589,6 @@ PluginComponent {
                         }
 
                         MouseArea {
-                            id: offsetSaveMA
-                            width: 32; height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: root.lyricsOffset !== 0 && root.currentTitle !== "" && root.lyricsLines.length > 0
-                            onClicked: {
-                                root.writeToCache(root.currentTitle, root.currentArtist || "", root.lyricsLines, root.lyricSource);
-                                console.info("[Lyrics] 偏移已保存: +" + root.lyricsOffset + "s -> \"" + root.currentTitle + "\"");
-                            }
-                            cursorShape: Qt.PointingHandCursor
-
-                            Rectangle {
-                                anchors.fill: parent; radius: Theme.cornerRadius
-                                color: offsetSaveMA.pressed ? Theme.surfaceContainerHighest : Theme.surfaceContainer
-                            }
-                            DankIcon {
-                                anchors.centerIn: parent; name: "save"; size: 16
-                                color: root._cardAccent
-                            }
-
-                            ToolTip.text: root.isEnglish ? "Save Lyrics Offset" : "保存歌词偏移"
-                            ToolTip.visible: offsetSaveMA.containsMouse
-                            ToolTip.delay: 500
-                        }
-
-                        MouseArea {
-                            id: openCacheMA
-                            width: 32; height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-                            onClicked: {
-                                if (root.currentTitle) {
-                                    var cachePath = root._cacheFilePath(root.currentTitle, root.currentArtist || "")
-                                    root.cacheProbe.probePath = cachePath
-                                    root.cacheProbe.path = cachePath
-                                    root.cacheProbe.load()
-                                }
-                            }
-                            cursorShape: Qt.PointingHandCursor
-
-                            ToolTip.text: root.isEnglish ? "View Lyrics File" : "查看歌词文件"
-                            ToolTip.visible: openCacheMA.containsMouse
-                            ToolTip.delay: 500
-
-                            Rectangle {
-                                anchors.fill: parent; radius: Theme.cornerRadius
-                                color: openCacheMA.pressed ? Theme.surfaceContainerHighest : Theme.surfaceContainer
-                            }
-                            DankIcon {
-                                anchors.centerIn: parent; name: "folder_open"; size: 16
-                                color: Theme.surfaceText
-                            }
-                        }
-
-                        MouseArea {
                             id: scanLibMA
                             width: 32; height: 32
                             anchors.verticalCenter: parent.verticalCenter
@@ -2682,6 +2613,39 @@ PluginComponent {
                                 anchors.centerIn: parent; name: "library_music"; size: 16
                                 color: Theme.surfaceText
                             }
+                        }
+
+                        MouseArea {
+                            id: openCacheMA
+                            width: 32; height: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: {
+                                root._ensureCacheDir()
+                                Quickshell.execDetached(["gio", "open", root._cacheDir])
+                            }
+                            cursorShape: Qt.PointingHandCursor
+
+                            ToolTip.text: root.isEnglish ? "Open Lyrics Cache Folder" : "打开歌词缓存目录"
+                            ToolTip.visible: openCacheMA.containsMouse
+                            ToolTip.delay: 500
+
+                            Rectangle {
+                                anchors.fill: parent; radius: Theme.cornerRadius
+                                color: openCacheMA.pressed ? Theme.surfaceContainerHighest : Theme.surfaceContainer
+                            }
+                            DankIcon {
+                                anchors.centerIn: parent; name: "folder_open"; size: 16
+                                color: Theme.surfaceText
+                            }
+                        }
+
+                        StyledText {
+                            text: root.currentTitle ? root._cacheKey(root.currentTitle, root.currentArtist || "") : ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: "monospace"
+                            color: Theme.surfaceVariantText
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: text !== ""
                         }
                     }
 
