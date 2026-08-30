@@ -59,7 +59,6 @@ PluginSettings {
         wrapMode: Text.WordWrap
     }
 
-    // 语言设置
     StyledRect {
         id: languageRect
         width: parent.width
@@ -94,7 +93,6 @@ PluginSettings {
         }
     }
 
-    // 显示设置
     StyledRect {
         width: parent.width
         height: displayColumn.implicitHeight + Theme.spacingL * 2
@@ -206,7 +204,6 @@ PluginSettings {
         }
     }
 
-    // 导入内嵌歌词按钮
     Row {
         spacing: Theme.spacingS
         anchors.left: parent.left
@@ -265,7 +262,6 @@ PluginSettings {
         width: parent.width
     }
 
-    // 缓存设置
     StyledRect {
         width: parent.width
         height: cacheColumn.implicitHeight + Theme.spacingL * 2
@@ -300,7 +296,6 @@ PluginSettings {
                 defaultValue: Quickshell.env("HOME") + "/Music"
             }
 
-            // 刷新缓存按钮
             Row {
                 spacing: Theme.spacingS
                 anchors.left: parent.left
@@ -443,7 +438,6 @@ PluginSettings {
         onTriggered: importStatusText.text = ""
     }
 
-    // 内置 API 设置
     StyledRect {
         width: parent.width
         height: builtinColumn.implicitHeight + Theme.spacingL * 2
@@ -479,7 +473,6 @@ PluginSettings {
         }
     }
 
-    // 自定义 API 设置
     StyledRect {
         width: parent.width
         height: customApiColumn.implicitHeight + Theme.spacingL * 2

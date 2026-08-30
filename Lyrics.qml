@@ -8,49 +8,30 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
-/**
- * LyricsEmbed
- * 内嵌歌词优先的同步歌词插件，基于 xubuyuan18/dms-plugin-Lyrics 二次开发
- */
-
 PluginComponent {
     id: root
     layerNamespacePlugin: "lyricsEmbed"
-
-    // ============================================
-    // 配置属性
-    // ============================================
     property bool cachingEnabled: pluginData.cachingEnabled ?? true
     property bool lrclibEnabled: pluginData.lrclibEnabled ?? true
     property bool neteaseEnabled: pluginData.neteaseEnabled ?? true
     property bool customApiEnabled: pluginData.customApiEnabled ?? false
     property string customApiUrl: pluginData.customApiUrl ?? ""
     property string customApiMethod: pluginData.customApiMethod ?? "GET"
-
-    // ============================================
-    // 插件语言（zh / en / auto=跟随系统）
-    // ============================================
     property string language: pluginData.language ?? "auto"
 
-    // 系统是否为中文环境（auto 模式用）
     readonly property bool _systemChinese: (Qt.locale().name || "").toLowerCase().startsWith("zh")
         || (Quickshell.env("LANG") || "").toLowerCase().startsWith("zh")
 
-    // 英文界面开关（直接绑定 language，供属性绑定追踪）
     readonly property bool isEnglish: {
         var la = root.language;
         if (la === "auto")
             la = root._systemChinese ? "zh" : "en";
         return la === "en";
     }
-
-    // ============================================
     // MPRIS 播放器
-    // ============================================
 
-    // 播放器白名单（留空检测全部；逗号分隔，按 identity 模糊匹配）
     property string playerWhitelist: pluginData.playerWhitelist ?? ""
-    readonly property var _whitelist: playerWhitelist.split(/[,,、\s]+/)
+    readonly property var _whitelist: playerWhitelist.split(/[,，、\s]+/)
         .map(function(s) { return s.trim().toLowerCase(); })
         .filter(function(s) { return s.length > 0; })
 
@@ -78,18 +59,13 @@ PluginComponent {
         return firstMatch;
     }
     property var allPlayers: MprisController.availablePlayers
-
-    // ============================================
     // 浏览器视频检测
-    // ============================================
     
-    // 检测是否为火狐浏览器
     readonly property bool isFirefox: {
         var identity = activePlayer?.identity?.toLowerCase() || "";
         return identity.includes("firefox") || identity.includes("mozilla");
     }
     
-    // MV标识关键词（预定义，避免每次重新创建）
     readonly property var _mvKeywords: [
         "mv", "music video", "official video", "official mv", 
         "musicvideo", "video clip", "videoclip",
@@ -98,14 +74,12 @@ PluginComponent {
         "歌词版", "歌词mv", "lyrics video", "lyric video"
     ]
     
-    // 非MV视频关键词
     readonly property var _nonMvKeywords: [
         "tutorial", "review", "unboxing", "gameplay", 
         "walkthrough", "guide", "how to", "ep.", "episode",
         "教程", "评测", "开箱", "游戏", "攻略", "第", "集"
     ]
     
-    // 检测是否为MV（音乐视频）
     readonly property bool isMusicVideo: {
         if (!isFirefox) return false;
         
@@ -131,12 +105,10 @@ PluginComponent {
         return false;
     }
     
-    // 是否为浏览器视频模式（火狐播放视频但不是MV）
     readonly property bool isBrowserVideo: {
         return isFirefox && !isMusicVideo && currentTitle !== "";
     }
     
-    // 是否应该搜索歌词
     readonly property bool shouldSearchLyrics: {
         // 不是火狐浏览器 - 正常搜索歌词
         if (!isFirefox) return true;
@@ -147,12 +119,8 @@ PluginComponent {
         // 是火狐浏览器但不是MV - 不搜索歌词
         return false;
     }
-
-    // ============================================
     // 状态枚举
-    // ============================================
 
-    // 状态码（用于 lrclibStatus, neteaseStatus, cacheStatus）
     QtObject {
         id: status
         readonly property int none: 0
@@ -168,7 +136,6 @@ PluginComponent {
         readonly property int cacheDisabled: 10
     }
 
-    // 歌词获取生命周期
     QtObject {
         id: lyricState
         readonly property int idle: 0
@@ -177,7 +144,6 @@ PluginComponent {
         readonly property int notFound: 3
     }
 
-    // 歌词来源
     QtObject {
         id: lyricSrc
         readonly property int none: 0
@@ -186,14 +152,9 @@ PluginComponent {
         readonly property int netease: 3
         readonly property int custom: 4
     }
-
-    // ============================================
-    // 歌词状态
-    // ============================================
     property var lyricsLines: []
     property int currentLineIndex: -1
 
-    // 显示选项（设置页可调）
     property string coverPosition: pluginData.coverPosition ?? "left"
     property string lyricLanguage: pluginData.lyricLanguage ?? "both"
     property bool lyricEllipsis: pluginData.lyricEllipsis ?? true
@@ -202,14 +163,11 @@ PluginComponent {
     property string lyricBlocklist: pluginData.lyricBlocklist ?? ""
     property string musicLibraryPath: pluginData.musicLibraryPath || (Quickshell.env("HOME") + "/Music")
 
-    // 歌词时间偏移量（秒，正=歌词提前，负=歌词延后）
     property real lyricsOffset: 0
 
-    // 音乐库扫描状态: "" 空闲 / "running" / "ok" / "fail"
     property string scanLibStatus: ""
     property bool scanLibRunning: scanLibStatus === "running"
 
-    // 世界时钟时区配置（备份版用，格式："名称:偏移量" 逗号分隔）
     property string clockTimezones: pluginData.clockTimezones ?? "中国时间:8,日本时间:9,太平洋时间:auto"
     property bool useAlbumAccent: pluginData.useAlbumAccent ?? true
     property bool showStatusIndicators: pluginData.showStatusIndicators ?? true
@@ -218,15 +176,13 @@ PluginComponent {
     readonly property color _cardAccentTrack: Theme.withAlpha(root._cardAccent, 0.28)
     readonly property color _cardAccentSubtle: Theme.withAlpha(root._cardAccent, 0.55)
 
-    // 屏蔽词：歌词包含任一关键词的行不显示
-    readonly property var _blocklist: lyricBlocklist.split(/[,,、\s]+/)
+    readonly property var _blocklist: lyricBlocklist.split(/[,，、\s]+/)
         .map(function(s) { return s.trim(); })
         .filter(function(s) { return s.length > 0; })
 
     onLyricLanguageChanged: rebuildDisplayLines()
     onLyricBlocklistChanged: rebuildDisplayLines()
 
-    // 播放状态细分：无播放器→时钟；暂停→封面+标题/作者；播放→歌词
     readonly property bool hasPlayer: activePlayer !== null
     readonly property bool isPlaying: hasPlayer && activePlayer.playbackState === MprisPlaybackState.Playing
     readonly property bool pausedState: hasPlayer && !isPlaying
@@ -238,7 +194,6 @@ PluginComponent {
         precision: SettingsData.showSeconds ? SystemClock.Seconds : SystemClock.Minutes
     }
 
-    // 按语言过滤后的显示行与当前索引
     property var displayLines: []
     property int currentDisplayIndex: -1
     property var currentPair: null
@@ -250,34 +205,25 @@ PluginComponent {
     }
     property bool lyricsLoading: lyricStatus === lyricState.loading
 
-    // 内部状态跟踪
     property string _lastFetchedTrack: ""
     property string _lastFetchedArtist: ""
     property string _lastSyncedTrack: ""
     property string _lastSyncedArtist: ""
     property var _cancelActiveFetch: null
 
-    // 各源状态
     property int lrclibStatus: status.none
     property int neteaseStatus: status.none
     property int cacheStatus: status.none
 
-    // 当前状态
     property int lyricStatus: lyricState.idle
     property int lyricSource: lyricSrc.none
 
-    // 当前歌曲信息
     property string currentTitle: activePlayer?.trackTitle ?? ""
     property string currentArtist: activePlayer?.trackArtist ?? ""
     property string currentAlbum: activePlayer?.trackAlbum ?? ""
     property real currentDuration: activePlayer?.length ?? 0
 
-    // 强制更新标志（用于轮询）
     property bool _forceUpdate: false
-
-    // ============================================
-    // 计算属性
-    // ============================================
     property string currentLyricText: {
         // 处理歌曲名：去掉括号及括号内容
         var title = currentTitle || (root.pureInstrumental
@@ -292,22 +238,15 @@ PluginComponent {
         return title;
     }
 
-    // 是否有任何可用的在线歌词源
     readonly property bool onlineSourcesEnabled: neteaseEnabled || lrclibEnabled
         || (customApiEnabled && customApiUrl && customApiUrl.trim() !== "")
 
     // 当前曲目是否为纯音乐：
-    // - 无歌词 且 标题/歌手带纯音乐标记；或
-    // - 无歌词 且 用户关闭了全部在线源（此时无缓存即视为纯音乐）
     readonly property bool pureInstrumental: !lyricsLoading
         && lyricsLines.length === 0
         && (_isInstrumentalIdentity(currentTitle, currentArtist) || !root.onlineSourcesEnabled)
-
-    // ============================================
     // 定时器
-    // ============================================
 
-    // 防抖定时器 - 避免标题和艺术家同时变化时重复获取
     Timer {
         id: fetchDebounceTimer
         interval: 300
@@ -320,7 +259,6 @@ PluginComponent {
     }
     onCurrentArtistChanged: fetchDebounceTimer.restart()
 
-    // XHR 超时定时器
     Timer {
         id: xhrTimeoutTimer
         repeat: false
@@ -328,21 +266,12 @@ PluginComponent {
         onTriggered: if (onTimeout) onTimeout()
     }
 
-    // XHR 重试定时器
     Timer {
         id: xhrRetryTimer
         repeat: false
         property var onRetry: null
         onTriggered: if (onRetry) onRetry()
     }
-
-    // ============================================
-    // 状态管理函数
-    // ============================================
-
-    /**
-     * 重置歌词状态（保留 _lastFetchedTrack/_lastFetchedArtist）
-     */
     function _resetLyricsState() {
         lyricsLines = [];
         currentLineIndex = -1;
@@ -353,20 +282,13 @@ PluginComponent {
         lyricStatus = lyricState.loading;
         lyricSource = lyricSrc.none;
     }
-
-    /**
-     * 设置最终"未找到"状态
-     */
     function _setFinalNotFound(sourceStatusVal) {
         lrclibStatus = sourceStatusVal;
         neteaseStatus = sourceStatusVal;
         lyricStatus = lyricState.notFound;
         root._cancelActiveFetch = null;
     }
-
-    // ============================================
     // 缓存管理
-    // ============================================
 
     readonly property string _cacheDir: (Quickshell.env("HOME") || "") + "/.cache/Lyrics"
     property bool _cacheDirReady: false
@@ -377,7 +299,6 @@ PluginComponent {
         running: false
     }
 
-    // 音乐库内嵌歌词导入（卡片工具栏按钮触发）
     Process {
         id: scanLibProcess
         command: []
@@ -401,10 +322,6 @@ PluginComponent {
         _cacheDirReady = true;
         mkdirProcess.running = true;
     }
-
-    /**
-     * FNV-1a 32位哈希
-     */
     function _fnv1a32(str) {
         var hash = 0x811c9dc5;
         for (var i = 0; i < str.length; i++) {
@@ -421,7 +338,6 @@ PluginComponent {
         return _cacheDir + "/" + _cacheKey(title, artist) + ".json";
     }
 
-    // 缓存读取: 静态 FileView (避免动态实例化竞态)
     FileView {
         id: cacheReader
         property var callback
@@ -444,7 +360,6 @@ PluginComponent {
         }
     }
 
-    // 缓存文件探测: 仅判断是否存在，不读取内容
     FileView {
         id: cacheProbe
         property string probePath: ""
@@ -465,19 +380,11 @@ PluginComponent {
             }
         }
     }
-
-    /**
-     * 从缓存读取歌词
-     */
     function readFromCache(title, artist, callback) {
         cacheReader.callback = callback
         cacheReader.path = _cacheFilePath(title, artist)
         cacheReader.load()
     }
-
-    /**
-     * 写入缓存
-     */
     function writeToCache(title, artist, lines, source) {
         _ensureCacheDir();
         cacheWriterComponent.createObject(root, {
@@ -489,10 +396,6 @@ PluginComponent {
             cOffset: root.lyricsOffset
         });
     }
-
-    /**
-     * 清除当前歌曲的缓存并重新搜索
-     */
     function clearCurrentCacheAndRefetch() {
         if (!currentTitle) return;
         
@@ -506,7 +409,6 @@ PluginComponent {
         deleter.running = true;
     }
 
-    // 缓存删除进程组件
     Component {
         id: cacheDeleterProcessComponent
         Process {
@@ -525,7 +427,6 @@ PluginComponent {
         }
     }
 
-    // 缓存读取组件
     Component {
         id: cacheReaderComponent
         FileView {
@@ -547,7 +448,6 @@ PluginComponent {
         }
     }
 
-    // 缓存写入组件
     Component {
         id: cacheWriterComponent
         FileView {
@@ -579,15 +479,6 @@ PluginComponent {
             }
         }
     }
-
-    // ============================================
-    // 歌词获取协调
-    // ============================================
-
-    /**
-     * 主入口：检查并获取歌词
-     * 优先级：自定义API → 缓存 → 网易云 → lrclib
-     */
     function fetchLyricsIfNeeded() {
         if (!currentTitle) return;
 
@@ -637,10 +528,6 @@ PluginComponent {
             _startFetchFromSources(capturedTitle, capturedArtist);
         }
     }
-
-    /**
-     * 尝试从缓存读取，失败则从源获取
-     */
     function _tryCacheThenFetch(title, artist) {
         readFromCache(title, artist, function (cached) {
             // 守卫：歌曲已切换
@@ -659,10 +546,6 @@ PluginComponent {
             _startFetchFromSources(title, artist);
         });
     }
-
-    /**
-     * 应用缓存的歌词
-     */
     function _applyCachedLyrics(cached, title, artist) {
         root.lyricsLines = cached.lines;
         root.lyricStatus = lyricState.synced;
@@ -677,10 +560,6 @@ PluginComponent {
             root.lyricsOffset = cached.offset;
         console.info("[Lyrics] ✓ 缓存: 已加载 \"" + title + "\" 的歌词 (" + cached.lines.length + " 行)");
     }
-
-    /**
-     * 从各源获取歌词（网易云优先）
-     */
     function _startFetchFromSources(title, artist) {
         if (!root.onlineSourcesEnabled) {
             root._setFinalNotFound(status.notFound);
@@ -693,10 +572,6 @@ PluginComponent {
             _fetchFromLrclib(title, artist);
         }
     }
-
-    /**
-     * 记录歌曲切换日志
-     */
     function _logSongChange() {
         var durationStr = currentDuration > 0
             ? (Math.floor(currentDuration / 60) + ":" + ("0" + Math.floor(currentDuration % 60)).slice(-2))
@@ -704,15 +579,6 @@ PluginComponent {
         console.info("[Lyrics] ▶ 歌曲切换: \"" + currentTitle + "\" - " + currentArtist +
                     (currentAlbum ? " [" + currentAlbum + "]" : "") + " (" + durationStr + ")");
     }
-
-    // ============================================
-    // 网络请求工具
-    // ============================================
-
-    /**
-     * XHR 请求（带重试机制）
-     * @returns {Function} 取消函数
-     */
     function _xhrRequest(url, method, timeoutMs, onSuccess, onError, customHeaders, postData) {
         const MAX_RETRIES = 2;
         const RETRY_DELAY = 3000;
@@ -809,10 +675,7 @@ PluginComponent {
     function _xhrGet(url, timeoutMs, onSuccess, onError, customHeaders) {
         return _xhrRequest(url, "GET", timeoutMs, onSuccess, onError, customHeaders, null);
     }
-
-    // ============================================
     // 歌词源：lrclib.net
-    // ============================================
 
     function _fetchFromLrclib(expectedTitle, expectedArtist) {
         if (!_checkSourceEnabled("lrclib", lrclibEnabled, neteaseEnabled)) return;
@@ -891,10 +754,7 @@ PluginComponent {
             _setFinalNotFound(statusVal);
         }
     }
-
-    // ============================================
     // 歌词源：网易云音乐
-    // ============================================
 
     function _fetchFromNetease(expectedTitle, expectedArtist) {
         if (!_checkSourceEnabled("netease", neteaseEnabled, false)) {
@@ -1022,10 +882,7 @@ PluginComponent {
             _setFinalNotFound(status.error);
         }
     }
-
-    // ============================================
     // 歌词源：自定义 API
-    // ============================================
 
     function _fetchFromCustomApi(expectedTitle, expectedArtist) {
         console.info("[Lyrics] 自定义API: 获取 \"" + expectedTitle + "\"");
@@ -1115,10 +972,7 @@ PluginComponent {
             _fetchFromLrclib(title, artist);
         }
     }
-
-    // ============================================
     // 歌词处理辅助函数
-    // ============================================
 
     function _checkSourceEnabled(name, enabled, hasFallback) {
         if (!enabled) {
@@ -1143,12 +997,7 @@ PluginComponent {
     function _isCurrentTrack(title, artist) {
         return title === root._lastFetchedTrack && artist === root._lastFetchedArtist;
     }
-
-    /**
-     * 网易云歌曲匹配 - 支持大小写、空格模糊匹配和专辑匹配
-     */
     function _findBestMatch(songs, expectedTitle, expectedAlbum) {
-        // 标准化函数：转为小写并移除所有空格
         function normalize(str) {
             if (!str) return "";
             return str.toLowerCase().replace(/\s+/g, "");
@@ -1247,12 +1096,6 @@ PluginComponent {
 
     // -------------------------------------------------------------------------
     // LRC parser
-    // -------------------------------------------------------------------------
-
-    /**
-     * 检查是否为纯音乐标记
-     * 支持多种变体："纯音乐，请欣赏"、"纯音乐 请欣赏"、"Instrumental"等
-     */
     function _isInstrumentalMarker(text) {
         if (!text || text.trim() === "") return false;
 
@@ -1283,11 +1126,6 @@ PluginComponent {
 
         return false;
     }
-
-    /**
-     * 根据标题/艺术家判断是否为纯音乐（无歌词曲目）
-     * 匹配 Instrumental / 纯音乐 / BGM / OST / 主题曲 等常见标记
-     */
     function _isInstrumentalIdentity(title, artist) {
         var hay = ((title || "") + " " + (artist || "")).toLowerCase();
         if (!hay.trim()) return false;
@@ -1353,7 +1191,6 @@ PluginComponent {
     // Position tracking for synced lyrics
     // -------------------------------------------------------------------------
 
-    // MPRIS Position 锚点：部分播放器（如 kew）上报停滞，播放中按真实时间外推
     property real _lastRealPos: -1
     property real _lastPosStamp: 0
 
@@ -1390,7 +1227,6 @@ PluginComponent {
         return (d.getUTCMonth() + 1) + "/" + d.getUTCDate() + " 周" + wd[d.getUTCDay()];
     }
 
-    // 太平洋时间（洛杉矶）：自动处理夏令时（3月第二个周日 ~ 11月第一个周日）
     function _pacificOffset() {
         const now = worldClockSource.date || new Date();
         const t = now.getTime();
@@ -1407,7 +1243,6 @@ PluginComponent {
         return (t >= start && t < end) ? -7 : -8;
     }
 
-    // 解析 clockTimezones 设置（名称:偏移 逗号分隔），偏移可为数字或 auto（=太平洋夏令时）
     readonly property var _clockTimezonesArr: {
         const raw = (root.clockTimezones || "").trim();
         if (!raw)
@@ -1439,7 +1274,6 @@ PluginComponent {
     }
 
     // 换曲时重置同步状态，避免残留上一首的行索引和位置锚点
-    // （由 onCurrentTitleChanged 统一触发，见 fetchDebounceTimer 处）
     function _resetLyricsForTrack() {
         currentLineIndex = -1;
         _lastRealPos = -1;
@@ -1513,14 +1347,12 @@ PluginComponent {
         return false;
     }
 
-    // 缓存首行的 "歌名 - 歌手" 元数据头，不算歌词
     function _isHeaderLine(t) {
         if (!t || !currentTitle || !currentArtist)
             return false;
         return t.includes(currentTitle) && t.includes(currentArtist);
     }
 
-    // 将歌词按时间戳分组（容差 0.35s，兼容双语行毫秒级偏差），按语言过滤并剔除屏蔽行
     function rebuildDisplayLines() {
         var mode = lyricLanguage;
         if (lyricsLines.length === 0) {
@@ -1608,7 +1440,6 @@ PluginComponent {
         currentDisplayIndex = idx;
     }
 
-    // 当前时间组的 { 原文, 翻译 } 文本对（居中分栏模式使用）
     function _rebuildCurrentPair() {
         if (lyricsLines.length === 0 || currentLineIndex < 0) {
             currentPair = null;
@@ -1773,17 +1604,20 @@ PluginComponent {
             readonly property int fontSize: pluginData.lyricsFontSize || Theme.fontSizeMedium
             readonly property bool infoPaused: root.pausedState
 
-            // 前奏阶段：正在播放但还没到第一句歌词
             readonly property bool introPhase: root.hasPlayer && root.isPlaying
                 && root.displayLines.length > 0
                 && root._lastRealPos < (root.displayLines[0]?.time ?? 0)
 
-            // 纯音乐/无歌词：显示标题+作者而非 ♪ 符号
             readonly property bool instrumentalPhase: root.hasPlayer && root.isPlaying && !root.lyricsLoading
                 && (root.lyricsLines.length === 0 ||
                     (root.currentLineIndex >= 0
                      && root.lyricsLines[root.currentLineIndex]
                      && root._isInstrumentalMarker(root.lyricsLines[root.currentLineIndex].text)))
+
+            readonly property bool blockedPhase: root.hasPlayer && root.isPlaying && !root.lyricsLoading
+                && root.currentLineIndex >= 0
+                && root.lyricsLines[root.currentLineIndex]
+                && root._isBlocked(root.lyricsLines[root.currentLineIndex].text)
 
             // 组件上滚轮调整播放器音量（不拦截点击）
             MouseArea {
@@ -1819,7 +1653,6 @@ PluginComponent {
                 }
             }
 
-            // 左右文本等宽（取较大者），保证封面始终居中
             readonly property real sideWidth: root.idleClock
                 ? Math.ceil(_clockMetrics.advanceWidth) + 2
                 : Math.max(centerLeftText.implicitWidth, centerRightText.implicitWidth)
@@ -1943,7 +1776,7 @@ PluginComponent {
                     text: {
                         if (root.idleClock)
                             return root.clockText();
-                        if (hPillRoot.infoPaused || hPillRoot.introPhase || hPillRoot.instrumentalPhase)
+                        if (hPillRoot.infoPaused || hPillRoot.introPhase || hPillRoot.instrumentalPhase || hPillRoot.blockedPhase)
                             return root.currentTitle || "";
                         if (hPillRoot.dualMode)
                             return root.currentPair?.orig ?? "";
@@ -1976,7 +1809,7 @@ PluginComponent {
                     anchors.verticalCenter: parent.verticalCenter
                     horizontalAlignment: Text.AlignLeft
                     text: {
-                        if (hPillRoot.infoPaused || hPillRoot.introPhase || hPillRoot.instrumentalPhase)
+                        if (hPillRoot.infoPaused || hPillRoot.introPhase || hPillRoot.instrumentalPhase || hPillRoot.blockedPhase)
                             return root.currentArtist || "";
                         if (hPillRoot.dualMode)
                             return root.currentPair?.trans ?? "";
@@ -2002,7 +1835,6 @@ PluginComponent {
             }
         }
     }
-
 
     verticalBarPill: root.activePlayer ? vPillComponent : null
 
@@ -2239,17 +2071,13 @@ PluginComponent {
                       ? Theme.surfaceContainerHigh
                       : Theme.surfaceContainer
                 clip: true
-
-                // ============================================
                 // 黑胶唱片专辑封面
-                // ============================================
                 // 设计说明：
                 // - 尺寸：200x200，保持原有大小
                 // - 样式：深灰色带纹理的黑胶唱片效果
                 // - 中心：80x80的专辑封面
                 // - 位置：卡片右上角，部分超出边界
                 // - 旋转动画：20秒/圈，更慢更优雅
-                // ============================================
                 Item {
                     id: _vinylRecordContainer
                     width: 200
@@ -2449,15 +2277,11 @@ PluginComponent {
                             width: parent.width
                             spacing: 4
                             visible: root.activePlayer && root.currentDuration > 0
-
-                        // ============================================
                         // DMS Wave Progress (M3WaveProgress)
-                        // ============================================
                         // 与 DMS 自带媒体面板一致的动态波浪进度条：
                         // - 播放时正弦波浪随 FrameAnimation 逐帧流动
                         // - 已播放部分用 accent 色填充，未播放为半透明轨道
                         // - 播放头为圆头 pill，拖动时实时预览，松手才 seek
-                        // ============================================
                         M3WaveProgress {
                             id: macProgressBar
                             width: parent.width
@@ -2507,7 +2331,6 @@ PluginComponent {
                             }
                         }
 
-                            // Poll MPRIS position to keep progress bar and time text updated
                             Timer {
                                 id: progressPollTimer
                                 interval: 100
