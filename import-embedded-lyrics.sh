@@ -8,16 +8,23 @@ SUPPORTED_EXT="flac|mp3|ogg|m4a|wma|aac|opus|ape|wav"
 
 mkdir -p "$CACHE_DIR"
 
-# FNV-1a32 哈希函数
-fnv1a32() {
-    echo -n "$1" | python3 -c "
+# FNV-1a32 哈希函数（与 Lyrics.qml 的 _fnv1a32/_cacheKey 完全一致）：
+#   - 输入 = title + "\x00" + artist，再做 Unicode 小写（对应 QML 的 .toLowerCase()）
+#   - 逐 UTF-16 代码单元哈希（对应 QML 的 str.charCodeAt(i)），而非 UTF-8 字节
+# title/artist 通过 argv 传入，避免 bash 命令替换吞掉 NUL 分隔符。
+fnv1a32_key() {
+    python3 - "$1" "$2" <<'PYEOF'
 import sys
-data = sys.stdin.buffer.read()
+title = sys.argv[1]
+artist = sys.argv[2]
+s = (title + "\x00" + artist).lower()
 h = 0x811c9dc5
-for b in data:
-    h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
-print(f'{h:08x}')
-"
+b = s.encode("utf-16-le")
+for i in range(0, len(b), 2):
+    unit = b[i] | (b[i + 1] << 8)
+    h = ((h ^ unit) * 0x01000193) & 0xFFFFFFFF
+print(f"{h:08x}")
+PYEOF
 }
 
 count=0
@@ -65,9 +72,8 @@ for k in tags:
         continue
     fi
 
-    # 生成缓存键（与 Lyrics.qml 一致）
-    key_input="${title}\x00${artist}"
-    cache_key=$(fnv1a32 "$(echo -e "$key_input" | tr '[:upper:]' '[:lower:]')")
+    # 生成缓存键（与 Lyrics.qml 的 _cacheKey 完全一致）
+    cache_key=$(fnv1a32_key "$title" "$artist")
     cache_file="$CACHE_DIR/${cache_key}.json"
 
     # 跳过已缓存的文件
@@ -135,7 +141,7 @@ except Exception:
     pass
 data = {
     'lines': lines,
-    'source': 4,
+    'source': 5,
     'cachedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     'offset': offset
 }

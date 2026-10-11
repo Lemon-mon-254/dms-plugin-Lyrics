@@ -151,6 +151,7 @@ PluginComponent {
         readonly property int cache: 2
         readonly property int netease: 3
         readonly property int custom: 4
+        readonly property int embedded: 5
     }
     property var lyricsLines: []
     property int currentLineIndex: -1
@@ -188,6 +189,16 @@ PluginComponent {
     readonly property bool isPlaying: hasPlayer && activePlayer.playbackState === MprisPlaybackState.Playing
     readonly property bool pausedState: hasPlayer && !isPlaying
     readonly property bool idleClock: showClockWhenIdle && !hasPlayer
+
+    // 专辑封面 URL：优先 Mpris trackArtUrl，回退到 metadata 的 mpris:artUrl。
+    // 取代已从新版 DMS 移除的旧专辑封面组件内置的回退逻辑。
+    readonly property string albumArtUrl: {
+        var p = activePlayer;
+        if (!p) return "";
+        if (p.trackArtUrl) return p.trackArtUrl;
+        var m = p.metadata;
+        return m && m["mpris:artUrl"] ? m["mpris:artUrl"].toString() : "";
+    }
 
     // 与 DMS 内置时钟同源：SystemClock 驱动，精度跟随系统设置
     SystemClock {
@@ -1137,7 +1148,8 @@ PluginComponent {
 
         var sourceName = source === lyricSrc.lrclib ? "lrclib" :
                         source === lyricSrc.netease ? "网易云" :
-                        source === lyricSrc.custom ? "自定义API" : "未知";
+                        source === lyricSrc.custom ? "自定义API" :
+                        source === lyricSrc.embedded ? "内嵌歌词" : "未知";
 
         console.info("[Lyrics] ✓ " + sourceName + ": 已找到歌词 (" + lines.length + " 行) - \"" + title + "\"");
 
@@ -1748,10 +1760,12 @@ PluginComponent {
 
                 Component {
                     id: artSourceComponent
-                    DankAlbumArt {
+                    // MediaArtwork 在 DMS v1.6.1+ 与 master 均存在（旧 Dank 专辑封面组件已从新版 DMS 移除）。
+                    // 封面旋转由下方 RotationAnimation 驱动，故无需 showAnimation。
+                    MediaArtwork {
                         anchors.fill: parent
-                        activePlayer: root.activePlayer
-                        showAnimation: false
+                        artUrl: root.albumArtUrl
+                        cornerRadius: width / 2
                     }
                 }
 
@@ -2231,10 +2245,11 @@ font.pixelSize: hPillRoot.fontSize
 
                             Component {
                                 id: popArtSourceComponent
-                                DankAlbumArt {
+                                // 弹窗封面同样使用 MediaArtwork；旋转由 coverRotation 动画驱动。
+                                MediaArtwork {
                                     anchors.fill: parent
-                                    activePlayer: root.activePlayer
-                                    showAnimation: true
+                                    artUrl: root.albumArtUrl
+                                    cornerRadius: width / 2
                                 }
                             }
                         }
