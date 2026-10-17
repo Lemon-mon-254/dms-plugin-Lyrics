@@ -1,22 +1,24 @@
 # LyricsEmbed
 
-> 一款以 **内嵌歌词** 为核心的同步歌词插件，基于 [xubuyuan18/dms-plugin-Lyrics](https://github.com/xubuyuan18/dms-plugin-Lyrics) 二次开发，上游原作者为 [gasiyu/dms-plugin-musiclyrics](https://github.com/gasiyu/dms-plugin-musiclyrics)。
+> 一款支持 **内嵌歌词导入** 的 DMS 同步歌词插件，基于 [xubuyuan18/dms-plugin-Lyrics](https://github.com/xubuyuan18/dms-plugin-Lyrics) 二次开发，上游原作者为 [gasiyu/dms-plugin-musiclyrics](https://github.com/gasiyu/dms-plugin-musiclyrics)。
 
 **中文** | [English](README_EN.md)
 
-![Version](https://img.shields.io/badge/version-1.7.0-blue)
+![Version](https://img.shields.io/badge/version-1.7.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![DMS](https://img.shields.io/badge/DankMaterialShell-1.4+-purple)
 
 ## ✨ 特性
 
-### 🎵 内嵌歌词优先
-- 从音乐文件元数据的 `LYRICS`/`USLT` 标签中提取 LRC 歌词，导入本地缓存
+### 🎵 内嵌歌词导入
+- 扫描音乐库，从 `LYRICS` / `UNSYNCEDLYRICS` / `USLT` / `LYRIC` 标签中提取 LRC 歌词到本地缓存
 - 已缓存歌曲增量跳过，**不覆盖手动校准的歌词偏移**
+- 导入后与普通缓存歌曲一样，直接读取内嵌歌词
 - 音乐库路径可自定义（默认 `$HOME/Music`）
 
 ### 🔄 多源歌词
 - 自定义 API → 本地缓存 → 网易云音乐 → lrclib.net
+- 内嵌歌词通过手动导入写入本地缓存；自动获取仍从自定义 API 和缓存开始
 - 支持变量 `{title}`、`{artist}`、`{album}`
 
 ### 🌐 双语歌词
@@ -47,10 +49,10 @@ dms ipc call plugins reload lyricsEmbed
 
 > 若 `dms ipc plugins reload` 无效，重启 DankMaterialShell 使插件生效。
 
-依赖 `ffprobe`（ffmpeg 套件），用于内嵌歌词提取：
+依赖 `ffprobe`（ffmpeg 套件）和 `python3`，用于内嵌歌词提取：
 
 ```bash
-sudo pacman -S ffmpeg
+sudo pacman -S ffmpeg python
 ```
 
 ## 📁 项目结构
@@ -98,6 +100,13 @@ LyricsEmbed/
 https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 ```
 
+### 网络请求
+
+- `lrclib.net`：歌曲名、歌手、专辑和时长
+- `music.163.com`：先用歌曲名搜索，再用网易云歌曲 id 获取歌词（直连，不经过第三方代理）
+- 启用自定义 API 时请求你配置的地址
+- 不访问其他主机
+
 ## 📝 使用说明
 
 ### 内嵌歌词导入
@@ -129,7 +138,8 @@ https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 
 ### 缓存格式
 - 路径: `~/.cache/Lyrics/`
-- 文件名: `fnv1a32(title + "\0" + artist).json`
+- 文件名: `<歌曲名> - <歌手>_<fnv1a32(title + "\0" + artist)>.json`，插件与导入脚本使用相同的键和可读前缀
+- 旧版纯哈希文件名仍可读取，首次命中时会迁移为可读文件名
 - 内容: `{lines, source, cachedAt, offset}`
 
 ### 纯音乐检测

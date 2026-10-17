@@ -1,8 +1,8 @@
 import Quickshell
 import QtQuick
-import QtQuick.Controls
 import Quickshell.Io
 import qs.Common
+import qs.Modals.Common
 import qs.Modules.Plugins
 import qs.Widgets
 
@@ -315,7 +315,7 @@ PluginSettings {
                     height: 36
                     anchors.verticalCenter: parent.verticalCenter
 
-                    onClicked: clearCacheDialog.open()
+                    onClicked: root._confirmClearCache()
 
                     Rectangle {
                         anchors.fill: parent
@@ -364,22 +364,29 @@ PluginSettings {
         }
     }
 
+    function _confirmClearCache() {
+        var host = root.Window.window ? root.Window.window.contentItem : root;
+        if (!host)
+            return;
+        var dialog = confirmDialogComponent.createObject(host);
+        if (!dialog)
+            return;
+        dialog.dialogClosed.connect(function () {
+            dialog.destroy();
+        });
+        dialog.show(
+            root.isEnglish ? "Confirm Clear Cache" : "确认清除缓存",
+            root.isEnglish ? "Are you sure you want to clear all lyric caches? This cannot be undone." : "确定要清除所有歌词缓存吗？此操作不可恢复。",
+            function () {
+                clearCacheProcess.running = true;
+            }
+        );
+    }
+
     // 清除缓存确认对话框
-    Dialog {
-        id: clearCacheDialog
-        title: root.isEnglish ? "Confirm Clear Cache" : "确认清除缓存"
-        modal: true
-        standardButtons: Dialog.Yes | Dialog.No
-
-        contentItem: StyledText {
-            text: root.isEnglish ? "Are you sure you want to clear all lyric caches? This cannot be undone." : "确定要清除所有歌词缓存吗？此操作不可恢复。"
-            wrapMode: Text.WordWrap
-            width: parent.width
-        }
-
-        onAccepted: {
-            clearCacheProcess.running = true;
-        }
+    Component {
+        id: confirmDialogComponent
+        ConfirmDialogOverlay {}
     }
 
     // 清除缓存进程

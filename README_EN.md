@@ -1,18 +1,20 @@
 # LyricsEmbed
 
-> A synced lyrics plugin focused on **embedded lyrics**, a fork of [xubuyuan18/dms-plugin-Lyrics](https://github.com/xubuyuan18/dms-plugin-Lyrics). Original upstream author: [gasiyu/dms-plugin-musiclyrics](https://github.com/gasiyu/dms-plugin-musiclyrics).
+> A synced lyrics widget for DMS with optional embedded-lyric import, a fork of [xubuyuan18/dms-plugin-Lyrics](https://github.com/xubuyuan18/dms-plugin-Lyrics). Original upstream author: [gasiyu/dms-plugin-musiclyrics](https://github.com/gasiyu/dms-plugin-musiclyrics).
 
 [中文文档](README.md) | **English**
 
 ## ✨ Features
 
-### 🎵 Embedded Lyrics First
-- Extract LRC lyrics from `LYRICS`/`USLT` tags in music file metadata, import into local cache
+### 🎵 Embedded Lyrics Import
+- Scan the music library and extract LRC lyrics from `LYRICS` / `UNSYNCEDLYRICS` / `USLT` / `LYRIC` tags into the local cache
 - Incremental: skips already-cached songs, **never overwrites manually calibrated lyric offsets**
+- After import, the widget reads embedded lyrics from the cache like any other cached song
 - Customizable music library path (default `$HOME/Music`)
 
 ### 🔄 Multiple Sources
 - Custom API → Local Cache → Netease Music → lrclib.net
+- Embedded lyrics are imported manually into the local cache; automatic fetching still starts with the custom API and cache
 - Variables supported: `{title}`, `{artist}`, `{album}`
 
 ### 🌐 Bilingual Lyrics
@@ -52,10 +54,10 @@ dms ipc call plugins reload lyricsEmbed
 
 > If `dms ipc plugins reload` does not work, restart DankMaterialShell.
 
-Requires `ffprobe` (ffmpeg suite) for embedded lyric extraction:
+Requires `ffprobe` (ffmpeg suite) and `python3` for embedded lyric extraction:
 
 ```bash
-sudo pacman -S ffmpeg
+sudo pacman -S ffmpeg python
 ```
 
 ## 📁 Project Structure
@@ -104,6 +106,13 @@ LyricsEmbed/
 https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 ```
 
+### Network Requests
+
+- `lrclib.net`: track title, artist, album and duration
+- `music.163.com`: track title for search, then the Netease song id for lyrics (queried directly, no third-party proxy)
+- Your custom API URL, when enabled
+- No other hosts are contacted
+
 ## 📝 Usage
 
 ### Import Embedded Lyrics
@@ -135,7 +144,8 @@ https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 
 ### Cache Format
 - Path: `~/.cache/Lyrics/`
-- Filename: `fnv1a32(title + "\0" + artist).json`
+- Filename: `<title> - <artist>_<fnv1a32(title + "\0" + artist)>.json`; the widget and the import script share the same key and readable prefix
+- Legacy hash-only filenames are still read and migrated to the readable name on first use
 - Content: `{lines, source, cachedAt, offset}`
 
 ### Instrumental Detection

@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Io
@@ -420,7 +419,7 @@ PluginComponent {
         });
         reader.path = paths[0];
     }
-    function writeToCache(title, artist, lines, source) {
+    function writeToCache(title, artist, lines, source, offset) {
         _ensureCacheDir();
         cacheWriterComponent.createObject(root, {
             path: _cacheFilePath(title, artist),
@@ -428,7 +427,7 @@ PluginComponent {
             cArtist: artist,
             cLines: lines,
             cSource: source,
-            cOffset: root.lyricsOffset
+            cOffset: typeof offset === "number" ? offset : root.lyricsOffset
         });
     }
     function clearCurrentCacheAndRefetch() {
@@ -485,7 +484,8 @@ PluginComponent {
                 if (data && cNewPath && path !== cNewPath) {
                     // 命中的是旧 hash 名缓存：迁移一份到新可读名
                     console.info("[Lyrics] 迁移缓存: " + _cacheDir + "/" + _cacheKey(cTitle, cArtist) + " → 可读名");
-                    root.writeToCache(cTitle, cArtist, data.lines, data.source);
+                    root.writeToCache(cTitle, cArtist, data.lines, data.source,
+                                      typeof data.offset === "number" ? data.offset : 0);
                 }
                 if (cb) cb(data);
                 destroy();
@@ -687,7 +687,7 @@ PluginComponent {
                     currentXhr.setRequestHeader(key, customHeaders[key]);
                 }
             } else {
-                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.0");
+                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.1");
                 currentXhr.setRequestHeader("Accept", "application/json");
             }
 
@@ -873,7 +873,15 @@ PluginComponent {
     function _fetchNeteaseLyrics(songId, expectedTitle, expectedArtist, matchedName, matchedArtist) {
         if (!_isCurrentTrack(expectedTitle, expectedArtist)) return;
 
-        var lyricUrl = "https://api.paugram.com/netease/?id=" + encodeURIComponent(songId);
+        // Query NetEase directly instead of routing the song id through a third-party proxy.
+        var lyricUrl = "https://music.163.com/api/song/lyric?id=" + encodeURIComponent(songId)
+                     + "&lv=1&kv=1&tv=-1";
+
+        var customHeaders = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://music.163.com/"
+        };
 
         root._cancelActiveFetch = _xhrGet(lyricUrl, 15000,
             function (responseText, httpStatus) {
@@ -881,7 +889,8 @@ PluginComponent {
             },
             function (errMsg) {
                 _handleNeteaseError("歌词请求失败: " + errMsg, expectedTitle, expectedArtist);
-            }
+            },
+            customHeaders
         );
     }
 
@@ -897,12 +906,7 @@ PluginComponent {
         try {
             var result = JSON.parse(rawData);
 
-            if (!result.title) {
-                _handleNeteaseError("无歌曲数据", expectedTitle, expectedArtist);
-                return;
-            }
-
-            var lyricText = result.lyric || "";
+            var lyricText = result.lrc?.lyric || result.lyric || "";
             if (lyricText.trim() === "") {
                 _handleNeteaseError("该歌曲无歌词", expectedTitle, expectedArtist);
                 return;
@@ -1336,7 +1340,7 @@ PluginComponent {
     Timer {
         id: positionTimer
         interval: 200
-        running: activePlayer && lyricsLines.length > 0
+        running: isPlaying && lyricsLines.length > 0
         repeat: true
         onTriggered: {
             var now = Date.now() / 1000;
@@ -1718,7 +1722,7 @@ PluginComponent {
             component PillCover: Rectangle {
                 width: 40
                 height: 40
-                radius: 20
+                radius: width / 2
                 anchors.verticalCenter: parent.verticalCenter
                 color: Theme.surfaceContainerHighest
                 clip: true
@@ -1748,10 +1752,10 @@ PluginComponent {
 
                 Component {
                     id: artSourceComponent
-                    DankAlbumArt {
+                    DankCircularImage {
                         anchors.fill: parent
-                        activePlayer: root.activePlayer
-                        showAnimation: false
+                        imageSource: root.activePlayer?.trackArtUrl ?? ""
+                        fallbackIcon: "music_note"
                     }
                 }
 
@@ -1779,7 +1783,7 @@ PluginComponent {
                 Row {
                     anchors.verticalCenter: parent.verticalCenter
                     layoutDirection: Qt.LeftToRight
-                    spacing: 8
+                    spacing: Theme.spacingS
                     width: Math.min(implicitWidth, 350)
 
                     StyledText {
@@ -1945,21 +1949,21 @@ font.pixelSize: hPillRoot.fontSize
     // -------------------------------------------------------------------------
     component ApiStatusIndicators: Row {
         id: apiIndicators
-        spacing: 8
+        spacing: Theme.spacingS
 
         // 纯音乐识别指示器（无歌词且标题/歌手带纯音乐标记时覆盖各源状态）
         Rectangle {
             visible: root.pureInstrumental
             width: 96
             height: 28
-            radius: 6
+            radius: Theme.cornerRadius
             color: Theme.withAlpha(Theme.tertiary, 0.25)
             border.color: Theme.tertiary
             border.width: 1
 
             Row {
                 anchors.centerIn: parent
-                spacing: 4
+                spacing: Theme.spacingXS
 
                 DankIcon {
                     name: "music_off"
@@ -1970,7 +1974,7 @@ font.pixelSize: hPillRoot.fontSize
 
                 StyledText {
                     text: root.isEnglish ? "Instrumental" : "纯音乐"
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeSmall
                     color: Theme.tertiary
                     font.weight: Font.Bold
                     anchors.verticalCenter: parent.verticalCenter
@@ -1980,17 +1984,18 @@ font.pixelSize: hPillRoot.fontSize
 
         // 网易云指示器 - 带图标的圆角矩形（优先显示）
         Rectangle {
+            id: neteaseChip
             visible: !root.pureInstrumental
             width: 64
             height: 28
-            radius: 6
+            radius: Theme.cornerRadius
             color: Theme.withAlpha(root._apiStatusColor(root.neteaseStatus), 0.25)
             border.color: root._apiStatusColor(root.neteaseStatus)
             border.width: 1
 
             Row {
                 anchors.centerIn: parent
-                spacing: 4
+                spacing: Theme.spacingXS
 
                 DankIcon {
                 name: "cloud"
@@ -2001,37 +2006,40 @@ font.pixelSize: hPillRoot.fontSize
 
                 StyledText {
                     text: root.isEnglish ? "NetEase" : "网易"
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeSmall
                     color: root._apiStatusColor(root.neteaseStatus)
                     font.weight: Font.Bold
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
 
-            ToolTip.text: root._chipMeta[root.neteaseStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
-            ToolTip.visible: neteaseMouse.containsMouse
-            ToolTip.delay: 500
-
             MouseArea {
                 id: neteaseMouse
                 anchors.fill: parent
                 hoverEnabled: true
             }
+
+            LyricsTooltipHost {
+                text: root._chipMeta[root.neteaseStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
+                target: neteaseChip
+                hoverArea: neteaseMouse
+            }
         }
 
         // lrclib 指示器 - 带图标的圆角矩形
         Rectangle {
+            id: lrclibChip
             visible: !root.pureInstrumental
             width: 64
             height: 28
-            radius: 6
+            radius: Theme.cornerRadius
             color: Theme.withAlpha(root._apiStatusColor(root.lrclibStatus), 0.25)
             border.color: root._apiStatusColor(root.lrclibStatus)
             border.width: 1
 
             Row {
                 anchors.centerIn: parent
-                spacing: 4
+                spacing: Theme.spacingXS
 
                 DankIcon {
                 name: "library_music"
@@ -2042,36 +2050,39 @@ font.pixelSize: hPillRoot.fontSize
 
                 StyledText {
                     text: "LRC"
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeSmall
                     color: root._apiStatusColor(root.lrclibStatus)
                     font.weight: Font.Bold
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
 
-            ToolTip.text: root._chipMeta[root.lrclibStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
-            ToolTip.visible: lrclibMouse.containsMouse
-            ToolTip.delay: 500
-
             MouseArea {
                 id: lrclibMouse
                 anchors.fill: parent
                 hoverEnabled: true
             }
+
+            LyricsTooltipHost {
+                text: root._chipMeta[root.lrclibStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲")
+                target: lrclibChip
+                hoverArea: lrclibMouse
+            }
         }
 
         // 缓存指示器 - 带图标的圆角矩形
         Rectangle {
+            id: cacheChip
             width: 64
             height: 28
-            radius: 6
+            radius: Theme.cornerRadius
             color: Theme.withAlpha(root._apiStatusColor(root.cacheStatus), 0.25)
             border.color: root._apiStatusColor(root.cacheStatus)
             border.width: 1
 
             Row {
                 anchors.centerIn: parent
-                spacing: 4
+                spacing: Theme.spacingXS
 
                 DankIcon {
                 name: "storage"
@@ -2082,17 +2093,12 @@ font.pixelSize: hPillRoot.fontSize
 
                 StyledText {
                     text: root.isEnglish ? "Cache" : "缓存"
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeSmall
                     color: root._apiStatusColor(root.cacheStatus)
                     font.weight: Font.Bold
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
-
-            ToolTip.text: root.cacheStatus === status.cacheHit ? 
-                root.isEnglish ? "Click to clear cache and re-search" : "点击清除缓存并重新搜索" : (root._chipMeta[root.cacheStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲"))
-            ToolTip.visible: cacheMouse.containsMouse
-            ToolTip.delay: 500
 
             MouseArea {
                 id: cacheMouse
@@ -2104,6 +2110,13 @@ font.pixelSize: hPillRoot.fontSize
                         root.clearCurrentCacheAndRefetch();
                     }
                 }
+            }
+
+            LyricsTooltipHost {
+                text: root.cacheStatus === status.cacheHit ?
+                    root.isEnglish ? "Click to clear cache and re-search" : "点击清除缓存并重新搜索" : (root._chipMeta[root.cacheStatus]?.label ?? (root.isEnglish ? "Idle" : "空闲"))
+                target: cacheChip
+                hoverArea: cacheMouse
             }
         }
     }
@@ -2170,26 +2183,27 @@ font.pixelSize: hPillRoot.fontSize
                     anchors.rightMargin: -35
                     z: 10
 
-                    // 黑胶唱片主体（深灰色圆形）
+                    // 黑胶唱片主体
                     Rectangle {
                         id: vinylRecord
                         anchors.fill: parent
-                        radius: 100
-                        color: "#252525"  // 深灰色底色
+                        radius: width / 2
+                        color: Theme.surfaceContainerHighest
 
                         // 唱片纹理（同心圆纹路）
                         Canvas {
                             anchors.fill: parent
+                            property color grooveColor: Theme.outlineVariant
+                            onGrooveColorChanged: requestPaint()
                             onPaint: {
                                 var ctx = getContext("2d");
                                 var centerX = width / 2;
                                 var centerY = height / 2;
 
-                                // 绘制同心圆纹理（6条）
                                 for (var i = 2; i < 8; i++) {
                                     ctx.beginPath();
                                     ctx.arc(centerX, centerY, 45 + i * 10, 0, 2 * Math.PI);
-                                    ctx.strokeStyle = "#353535";  // 稍浅的灰色纹理
+                                    ctx.strokeStyle = grooveColor;
                                     ctx.lineWidth = 1;
                                     ctx.stroke();
                                 }
@@ -2200,9 +2214,9 @@ font.pixelSize: hPillRoot.fontSize
                         Rectangle {
                             width: 130
                             height: 130
-                            radius: 65
+                            radius: width / 2
                             anchors.centerIn: parent
-                            color: "#1a1a1a"  // 中心深色背景
+                            color: Theme.surfaceContainerHigh
                             clip: true
 
                             Timer {
@@ -2231,10 +2245,10 @@ font.pixelSize: hPillRoot.fontSize
 
                             Component {
                                 id: popArtSourceComponent
-                                DankAlbumArt {
+                                DankCircularImage {
                                     anchors.fill: parent
-                                    activePlayer: root.activePlayer
-                                    showAnimation: true
+                                    imageSource: root.activePlayer?.trackArtUrl ?? ""
+                                    fallbackIcon: "music_note"
                                 }
                             }
                         }
@@ -2242,12 +2256,12 @@ font.pixelSize: hPillRoot.fontSize
                         // 高光效果（增加立体感）
                         Rectangle {
                             anchors.fill: parent
-                            radius: 100
+                            radius: width / 2
                             gradient: Gradient {
-                                GradientStop { position: 0.0; color: "#20ffffff" }
-                                GradientStop { position: 0.3; color: "#00ffffff" }
-                                GradientStop { position: 0.7; color: "#00ffffff" }
-                                GradientStop { position: 1.0; color: "#15000000" }
+                                GradientStop { position: 0.0; color: Theme.withAlpha(Theme.surfaceText, 0.08) }
+                                GradientStop { position: 0.3; color: Theme.withAlpha(Theme.surfaceText, 0.0) }
+                                GradientStop { position: 0.7; color: Theme.withAlpha(Theme.surfaceText, 0.0) }
+                                GradientStop { position: 1.0; color: Theme.withAlpha(Theme.shadowStrong, 0.10) }
                             }
                         }
                     }
@@ -2323,7 +2337,7 @@ font.pixelSize: hPillRoot.fontSize
                         // Artist & Album - 字体跟随歌词字体设置
                         Column {
                             width: parent.width
-                            spacing: 4
+                            spacing: Theme.spacingXS
                             visible: root.activePlayer
 
                             Row {
@@ -2382,7 +2396,7 @@ font.pixelSize: hPillRoot.fontSize
                         // Progress bar with timestamps
                         Column {
                             width: parent.width
-                            spacing: 4
+                            spacing: Theme.spacingXS
                             visible: root.activePlayer && root.currentDuration > 0
                         // DMS Wave Progress (M3WaveProgress)
                         // 与 DMS 自带媒体面板一致的动态波浪进度条：
@@ -2562,7 +2576,7 @@ font.pixelSize: hPillRoot.fontSize
 
                                     Rectangle {
                                         anchors.fill: parent
-                                        radius: 32
+                                        radius: width / 2
                                         color: root._cardAccent
                                         opacity: 0.1
                                     }
@@ -2724,17 +2738,20 @@ font.pixelSize: hPillRoot.fontSize
                             }
                             cursorShape: Qt.PointingHandCursor
 
-                            ToolTip.text: scanLibRunning ? root.isEnglish ? "Importing..." : "导入中..." : root.isEnglish ? "Import Lyrics" : "导入缓存"
-                            ToolTip.visible: scanLibMA.containsMouse
-                            ToolTip.delay: 500
-
                             Rectangle {
                                 anchors.fill: parent; radius: Theme.cornerRadius
                                 color: scanLibMA.pressed ? Theme.surfaceContainerHighest : Theme.surfaceContainer
                             }
                             DankIcon {
-                                anchors.centerIn: parent; name: "library_music"; size: 16
+                                anchors.centerIn: parent; name: "library_music"; size: Theme.iconSizeSmall
                                 color: Theme.surfaceText
+                            }
+                            LyricsTooltipHost {
+                                text: root.scanLibRunning
+                                    ? (root.isEnglish ? "Importing..." : "导入中...")
+                                    : (root.isEnglish ? "Import Lyrics" : "导入缓存")
+                                target: scanLibMA
+                                hoverArea: scanLibMA
                             }
                         }
 
@@ -2748,17 +2765,18 @@ font.pixelSize: hPillRoot.fontSize
                             }
                             cursorShape: Qt.PointingHandCursor
 
-                            ToolTip.text: root.isEnglish ? "Open Lyrics Cache Folder" : "打开歌词缓存目录"
-                            ToolTip.visible: openCacheMA.containsMouse
-                            ToolTip.delay: 500
-
                             Rectangle {
                                 anchors.fill: parent; radius: Theme.cornerRadius
                                 color: openCacheMA.pressed ? Theme.surfaceContainerHighest : Theme.surfaceContainer
                             }
                             DankIcon {
-                                anchors.centerIn: parent; name: "folder_open"; size: 16
+                                anchors.centerIn: parent; name: "folder_open"; size: Theme.iconSizeSmall
                                 color: Theme.surfaceText
+                            }
+                            LyricsTooltipHost {
+                                text: root.isEnglish ? "Open Lyrics Cache Folder" : "打开歌词缓存目录"
+                                target: openCacheMA
+                                hoverArea: openCacheMA
                             }
                         }
 
@@ -2893,7 +2911,7 @@ font.pixelSize: hPillRoot.fontSize
             Rectangle {
                 width: 28
                 height: 28
-                radius: 14
+                radius: width / 2
                 color: sourceCard.sourceStatus === 0
                    ? Theme.withAlpha(Theme.surfaceContainerHighest, 0.5)
                    : Theme.withAlpha(root.chipColor(sourceCard.sourceStatus), 0.15)
@@ -2928,17 +2946,17 @@ font.pixelSize: hPillRoot.fontSize
                 Rectangle {
                 visible: sourceCard.sourceStatus !== 0
                 anchors.fill: parent
-                radius: 11
+                radius: height / 2
                 color: Theme.withAlpha(root.chipColor(sourceCard.sourceStatus), 0.15)
 
                 Row {
                     id: statusChipContent
                     anchors.centerIn: parent
-                    spacing: 4
+                    spacing: Theme.spacingXS
 
                     DankIcon {
                         name: root.chipIcon(sourceCard.sourceStatus)
-                        size: Theme.iconSizeXSmall
+                        size: Theme.iconSizeSmall
                         color: root.chipColor(sourceCard.sourceStatus)
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -2959,7 +2977,7 @@ font.pixelSize: hPillRoot.fontSize
                 Rectangle {
                 visible: sourceCard.sourceStatus === 0
                 anchors.fill: parent
-                radius: 11
+                radius: height / 2
                 color: Theme.withAlpha(Theme.surfaceContainerHighest, 0.3)
 
                 StyledText {
@@ -2972,6 +2990,83 @@ font.pixelSize: hPillRoot.fontSize
                 }
                 }
             }
+        }
+    }
+
+    // Local wrapper around DankTooltipV2. DMS 1.6.x does not ship
+    // DankTooltipHost yet, so keep the hover/delay handling here instead of
+    // depending on a component that is only available on newer builds.
+    component LyricsTooltipHost: Item {
+        id: tooltipHost
+
+        property var text: null
+        property Item target: null
+        property var hoverArea: null
+        property string side: "bottom"
+
+        readonly property bool hovered: hoverArea ? hoverArea.containsMouse === true : false
+
+        visible: false
+        width: 0
+        height: 0
+
+        function present() {
+            if (!tooltip || !tooltipHost.text || !tooltipHost.target?.visible)
+                return;
+            tooltip.show(String(tooltipHost.text), tooltipHost.target, 0, 0, tooltipHost.side);
+        }
+
+        function dismiss() {
+            if (tooltip)
+                tooltip.hide();
+        }
+
+        onHoveredChanged: {
+            if (hovered) {
+                delayTimer.restart();
+            } else {
+                delayTimer.stop();
+                dismiss();
+            }
+        }
+
+        onTextChanged: {
+            if (!text) {
+                dismiss();
+                return;
+            }
+            if (hovered) {
+                if (delayTimer.running)
+                    delayTimer.restart();
+                else
+                    present();
+            }
+        }
+
+        onTargetChanged: {
+            if (!target?.visible) {
+                dismiss();
+                return;
+            }
+            if (hovered && !delayTimer.running)
+                present();
+        }
+
+        onVisibleChanged: {
+            if (!visible) {
+                delayTimer.stop();
+                dismiss();
+            }
+        }
+
+        Timer {
+            id: delayTimer
+            interval: 500
+            onTriggered: tooltipHost.present()
+        }
+
+        DankTooltipV2 {
+            id: tooltip
         }
     }
 
