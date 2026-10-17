@@ -150,6 +150,7 @@ PluginComponent {
         readonly property int cache: 2
         readonly property int netease: 3
         readonly property int custom: 4
+        readonly property int embedded: 5
     }
     property var lyricsLines: []
     property int currentLineIndex: -1
@@ -187,6 +188,15 @@ PluginComponent {
     readonly property bool isPlaying: hasPlayer && activePlayer.playbackState === MprisPlaybackState.Playing
     readonly property bool pausedState: hasPlayer && !isPlaying
     readonly property bool idleClock: showClockWhenIdle && !hasPlayer
+
+    // 专辑封面 URL：优先使用 MPRIS trackArtUrl，回退到 metadata 中的 mpris:artUrl
+    readonly property string albumArtUrl: {
+        var p = activePlayer;
+        if (!p) return "";
+        if (p.trackArtUrl) return p.trackArtUrl;
+        var m = p.metadata;
+        return m && m["mpris:artUrl"] ? m["mpris:artUrl"].toString() : "";
+    }
 
     // 与 DMS 内置时钟同源：SystemClock 驱动，精度跟随系统设置
     SystemClock {
@@ -687,7 +697,7 @@ PluginComponent {
                     currentXhr.setRequestHeader(key, customHeaders[key]);
                 }
             } else {
-                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.2");
+                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.3");
                 currentXhr.setRequestHeader("Accept", "application/json");
             }
 
@@ -1143,7 +1153,8 @@ PluginComponent {
 
         var sourceName = source === lyricSrc.lrclib ? "lrclib" :
                         source === lyricSrc.netease ? "网易云" :
-                        source === lyricSrc.custom ? "自定义API" : "未知";
+                        source === lyricSrc.custom ? "自定义API" :
+                        source === lyricSrc.embedded ? "内嵌歌词" : "未知";
 
         console.info("[Lyrics] ✓ " + sourceName + ": 已找到歌词 (" + lines.length + " 行) - \"" + title + "\"");
 
@@ -1756,7 +1767,7 @@ PluginComponent {
                     id: artSourceComponent
                     DankCircularImage {
                         anchors.fill: parent
-                        imageSource: root.activePlayer?.trackArtUrl ?? ""
+                        imageSource: root.albumArtUrl
                         fallbackIcon: "music_note"
                     }
                 }
@@ -2249,7 +2260,7 @@ font.pixelSize: hPillRoot.fontSize
                                 id: popArtSourceComponent
                                 DankCircularImage {
                                     anchors.fill: parent
-                                    imageSource: root.activePlayer?.trackArtUrl ?? ""
+                                    imageSource: root.albumArtUrl
                                     fallbackIcon: "music_note"
                                 }
                             }

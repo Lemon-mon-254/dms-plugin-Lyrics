@@ -157,7 +157,7 @@ except Exception:
     pass
 data = {
     'lines': lines,
-    'source': 4,
+    'source': 5,
     'cachedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     'offset': offset
 }
