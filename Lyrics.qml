@@ -687,7 +687,7 @@ PluginComponent {
                     currentXhr.setRequestHeader(key, customHeaders[key]);
                 }
             } else {
-                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.1");
+                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.2");
                 currentXhr.setRequestHeader("Accept", "application/json");
             }
 
@@ -800,7 +800,8 @@ PluginComponent {
         lrclibStatus = statusVal;
         console.info("[Lyrics] lrclib: " + reason + " - \"" + title + "\"");
 
-        if (neteaseEnabled) {
+        // 仅在网易云尚未尝试过时回退；否则两个源会无限互相重试。
+        if (neteaseEnabled && neteaseStatus === status.none) {
             _fetchFromNetease(title, artist);
         } else {
             _setFinalNotFound(statusVal);
@@ -930,8 +931,9 @@ PluginComponent {
         neteaseStatus = status.error;
         console.warn("[Lyrics] 网易云: " + reason + " - \"" + title + "\"");
 
-        // 网易云失败时，回退到 lrclib
-        if (lrclibEnabled) {
+        // 网易云失败时，回退到 lrclib。只有在该源尚未尝试过时才继续，
+        // 否则两个源失败后会互相回调，形成无限请求循环。
+        if (lrclibEnabled && lrclibStatus === status.none) {
             console.info("[Lyrics] 网易云失败，尝试 lrclib...");
             _fetchFromLrclib(title, artist);
         } else {
@@ -970,7 +972,7 @@ PluginComponent {
     function _handleCustomApiResponse(responseText, expectedTitle, expectedArtist) {
         var rawData = (responseText || "").trim();
         if (rawData.length === 0) {
-            _handleNeteaseError("空歌词响应", expectedTitle, expectedArtist);
+            _fallbackToBuiltin("空歌词响应", expectedTitle, expectedArtist);
             return;
         }
 
@@ -996,7 +998,7 @@ PluginComponent {
             _applyLyricsLines(lines, lyricSrc.custom, expectedTitle, expectedArtist);
 
         } catch (e) {
-            _handleNeteaseError("解析失败: " + e, expectedTitle, expectedArtist);
+            _fallbackToBuiltin("解析失败: " + e, expectedTitle, expectedArtist);
         }
     }
 
