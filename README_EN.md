@@ -7,13 +7,16 @@
 ## ✨ Features
 
 ### 🎵 Embedded Lyrics Import
-- Scan the music library and extract LRC lyrics from `LYRICS` / `UNSYNCEDLYRICS` / `USLT` / `LYRIC` tags into the local cache
+- Scan the music library and extract lyrics from `LYRICS` / `UNSYNCEDLYRICS` / `USLT` / `LYRIC` tags into the local cache
+- Supports LRC timelines, multiple timestamps per line, and plain text without timestamps
 - Incremental: skips already-cached songs, **never overwrites manually calibrated lyric offsets**
 - After import, the widget reads embedded lyrics from the cache like any other cached song
 - Customizable music library path (default `$HOME/Music`)
 
 ### 🔄 Multiple Sources
-- Custom API → Local Cache → Netease Music → lrclib.net
+- Custom API (when enabled) → Local Cache → Netease Music → lrclib.net
+- If the custom API fails or returns no usable lyrics, fallback continues through cache → Netease → lrclib instead of skipping to the last source
+- Supports multi-timestamp LRC, `[mm:ss]` / `[mm:ss.xx]` / `[mm:ss.xxx]`, and plain-text lyrics
 - Embedded lyrics are imported manually into the local cache; automatic fetching still starts with the custom API and cache
 - Variables supported: `{title}`, `{artist}`, `{album}`
 
@@ -24,7 +27,7 @@
 
 ### 🎚️ Lyric Offset Tuning
 - `-` / `+` buttons in the toolbar step by 0.1s
-- Offsets are saved per-song and restored automatically on next play
+- Offsets are auto-saved per song 0.5s after the last adjustment and restored on next play; the saved offset is also restored before each custom API request
 
 ### 🎸 More
 - Vinyl record spinning cover popup, playback controls, real-time MPRIS sync
@@ -53,6 +56,8 @@ dms ipc call plugins reload lyricsEmbed
 ```
 
 > If `dms ipc plugins reload` does not work, restart DankMaterialShell.
+>
+> Requires DankMaterialShell 1.5.0 or newer.
 
 Requires `ffprobe` (ffmpeg suite) and `python3` for embedded lyric extraction:
 
@@ -93,7 +98,7 @@ LyricsEmbed/
 | Built-in | lrclib.net | Open-source backup source |
 | Custom API | URL / Method | Supports `{title}`, `{artist}`, `{album}` |
 
-**Fetch order**: Custom API → Local Cache → Netease Music → lrclib.net
+**Fetch order**: Custom API (when enabled) → Local Cache → Netease Music → lrclib.net. After a custom API failure, fallback continues through the cache and built-in sources.
 
 ### Custom API
 
@@ -109,7 +114,7 @@ https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 ### Network Requests
 
 - `lrclib.net`: track title, artist, album and duration
-- `music.163.com`: track title for search, then the Netease song id for lyrics (queried directly, no third-party proxy)
+- `music.163.com`: track title and artist for search (up to 10 results), local validation of title, artist, album and duration, then the Netease song id for lyrics (queried directly, no third-party proxy)
 - Your custom API URL, when enabled
 - No other hosts are contacted
 
@@ -122,31 +127,32 @@ https://lrclib.net/api/get?track_name={title}&artist_name={artist}
 
 ### Lyric Offset Tuning
 1. Open the popup panel, use `-` / `+` in the toolbar (0.1s per step)
-2. Click the save button (💾) once aligned — written to that song's cache
+2. The offset is written to that song's cache automatically 0.5s after the last adjustment
 3. Restored automatically on next play, remembered per song
 
 ## 🧠 Implementation Details
 
 ### Fetch Flow
 1. Detect track changes (MPRIS)
-2. Fetch order: Custom API → Cache → Netease → lrclib
-3. Parse LRC and build a time index
-4. Poll the playback position and match the current line
+2. Fetch in priority order: Custom API (when enabled) → Cache → Netease → lrclib
+3. Parse LRC and build a time index; treat text without timestamps as plain lyrics
+4. Poll the playback position and match the current line; plain lyrics keep showing the first line
+5. Validate both track identity and request generation in callbacks so stale responses cannot overwrite a new track
 
-### Album Matching
+### Netease Matching
 ```
-1. Exact title + album match
-2. Exact title (case/space-insensitive)
-3. Fuzzy title + album match
-4. Fuzzy title (containment)
-5. Fall back to the first result
+1. Search by track title and artist, up to 10 results
+2. Require an exact or containment title match
+3. Require an artist match when the result provides artist information
+4. Score by title exactness, artist, album and duration
+5. Pick the highest score; fall back to lrclib when nothing matches
 ```
 
 ### Cache Format
 - Path: `~/.cache/Lyrics/`
 - Filename: `<title> - <artist>_<fnv1a32(title + "\0" + artist)>.json`; the widget and the import script share the same key and readable prefix
 - Legacy hash-only filenames are still read and migrated to the readable name on first use
-- Content: `{lines, source, cachedAt, offset}`
+- Content: `{lines, source, cachedAt, offset, plain}`; `plain: true` marks plain-text lyrics
 
 ### Instrumental Detection
 Lines containing these markers are filtered automatically:

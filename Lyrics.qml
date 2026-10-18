@@ -154,6 +154,8 @@ PluginComponent {
     }
     property var lyricsLines: []
     property int currentLineIndex: -1
+    // 纯文本歌词没有时间轴，显示首行且不启动位置轮询
+    property bool lyricsArePlain: false
 
     property string coverPosition: pluginData.coverPosition ?? "left"
     property string lyricLanguage: pluginData.lyricLanguage ?? "both"
@@ -164,6 +166,7 @@ PluginComponent {
     property string musicLibraryPath: pluginData.musicLibraryPath || (Quickshell.env("HOME") + "/Music")
 
     property real lyricsOffset: 0
+    property bool _suppressOffsetSave: false
 
     property string scanLibStatus: ""
     property bool scanLibRunning: scanLibStatus === "running"
@@ -209,6 +212,7 @@ PluginComponent {
     property var currentPair: null
 
     onLyricsLinesChanged: rebuildDisplayLines()
+    onLyricsArePlainChanged: rebuildDisplayLines()
     onCurrentLineIndexChanged: {
         _syncDisplayIndex();
         _rebuildCurrentPair();
@@ -220,6 +224,9 @@ PluginComponent {
     property string _lastSyncedTrack: ""
     property string _lastSyncedArtist: ""
     property var _cancelActiveFetch: null
+    property int _xhrRequestSeq: 0
+    property int _activeXhrRequest: 0
+    property int _fetchToken: 0
 
     property int lrclibStatus: status.none
     property int neteaseStatus: status.none
@@ -242,13 +249,15 @@ PluginComponent {
         title = title.replace(/[（(].*?[）)]/g, "");  // 去掉括号及内容
         
         // 如果有歌词，显示"歌曲名 歌词"
-        if (lyricsLines.length > 0 && currentLineIndex >= 0 && lyricsLines[currentLineIndex].text) {
-            return title + "  " + lyricsLines[currentLineIndex].text;
+        var line = currentLineIndex >= 0 ? lyricsLines[currentLineIndex] : null;
+        if (lyricsLines.length > 0 && line && line.text) {
+            return title + "  " + line.text;
         }
         return title;
     }
 
-    readonly property bool onlineSourcesEnabled: neteaseEnabled || lrclibEnabled
+    readonly property bool builtinSourcesEnabled: neteaseEnabled || lrclibEnabled
+    readonly property bool onlineSourcesEnabled: builtinSourcesEnabled
         || (customApiEnabled && customApiUrl && customApiUrl.trim() !== "")
 
     // 当前曲目是否为纯音乐：
@@ -263,15 +272,27 @@ PluginComponent {
         onTriggered: root.fetchLyricsIfNeeded()
     }
 
+    Timer {
+        id: offsetSaveTimer
+        interval: 500
+        onTriggered: root._saveCurrentOffset()
+    }
+
     onCurrentTitleChanged: {
         _resetLyricsForTrack();
         fetchDebounceTimer.restart();
     }
     onCurrentArtistChanged: fetchDebounceTimer.restart()
+    onLyricsOffsetChanged: {
+        if (!_suppressOffsetSave && lyricsLines.length > 0
+                && lyricStatus === lyricState.synced)
+            offsetSaveTimer.restart();
+    }
 
     Timer {
         id: xhrTimeoutTimer
         repeat: false
+        property int ownerId: 0
         property var onTimeout: null
         onTriggered: if (onTimeout) onTimeout()
     }
@@ -279,13 +300,18 @@ PluginComponent {
     Timer {
         id: xhrRetryTimer
         repeat: false
+        property int ownerId: 0
         property var onRetry: null
         onTriggered: if (onRetry) onRetry()
     }
     function _resetLyricsState() {
+        offsetSaveTimer.stop();
         lyricsLines = [];
+        lyricsArePlain = false;
         currentLineIndex = -1;
+        _suppressOffsetSave = true;
         lyricsOffset = 0;
+        _suppressOffsetSave = false;
         lrclibStatus = status.none;
         neteaseStatus = status.none;
         cacheStatus = status.none;
@@ -293,8 +319,9 @@ PluginComponent {
         lyricSource = lyricSrc.none;
     }
     function _setFinalNotFound(sourceStatusVal) {
-        lrclibStatus = sourceStatusVal;
-        neteaseStatus = sourceStatusVal;
+        // 已禁用的源保持“未启用”状态，不伪装成请求失败
+        lrclibStatus = lrclibEnabled ? sourceStatusVal : status.skippedConfig;
+        neteaseStatus = neteaseEnabled ? sourceStatusVal : status.skippedConfig;
         lyricStatus = lyricState.notFound;
         root._cancelActiveFetch = null;
     }
@@ -429,7 +456,33 @@ PluginComponent {
         });
         reader.path = paths[0];
     }
-    function writeToCache(title, artist, lines, source, offset) {
+    function _validLyricsLines(lines) {
+        if (!Array.isArray(lines) || lines.length === 0)
+            return false;
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (!line || typeof line.text !== "string"
+                    || typeof line.time !== "number" || !isFinite(line.time))
+                return false;
+        }
+        return true;
+    }
+    function _cacheIsPlain(cached) {
+        if (!cached)
+            return false;
+        if (typeof cached.plain === "boolean")
+            return cached.plain;
+        // 兼容旧缓存：纯文本歌词曾以 time=0 写入但没有 plain 字段
+        var lines = cached.lines;
+        if (!_validLyricsLines(lines))
+            return false;
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].time !== 0)
+                return false;
+        }
+        return true;
+    }
+    function writeToCache(title, artist, lines, source, offset, plain) {
         _ensureCacheDir();
         cacheWriterComponent.createObject(root, {
             path: _cacheFilePath(title, artist),
@@ -437,12 +490,33 @@ PluginComponent {
             cArtist: artist,
             cLines: lines,
             cSource: source,
-            cOffset: typeof offset === "number" ? offset : root.lyricsOffset
+            cOffset: typeof offset === "number" ? offset : root.lyricsOffset,
+            cPlain: plain === true
         });
+    }
+    function _saveCurrentOffset() {
+        if (!cachingEnabled || !currentTitle || lyricsLines.length === 0)
+            return;
+        if (lyricStatus !== lyricState.synced)
+            return;
+        if (currentTitle !== _lastSyncedTrack || currentArtist !== _lastSyncedArtist)
+            return;
+        writeToCache(currentTitle, currentArtist, lyricsLines, lyricSource,
+                     lyricsOffset, lyricsArePlain);
     }
     function clearCurrentCacheAndRefetch() {
         if (!currentTitle) return;
-        
+
+        // 立即作废并取消进行中的请求，避免删除缓存后旧响应又把缓存写回来
+        _fetchToken++;
+        offsetSaveTimer.stop();
+        _lastSyncedTrack = "";
+        _lastSyncedArtist = "";
+        if (_cancelActiveFetch) {
+            _cancelActiveFetch();
+            _cancelActiveFetch = null;
+        }
+
         var cacheFiles = [ _cacheFilePath(currentTitle, currentArtist),
                            _cacheDir + "/" + _cacheKey(currentTitle, currentArtist) + ".json" ];
         console.info("[Lyrics] 清除缓存: \"" + currentTitle + "\"");
@@ -451,7 +525,8 @@ PluginComponent {
         var deleter = cacheDeleterProcessComponent.createObject(root, {
             cacheFiles: cacheFiles
         });
-        deleter.running = true;
+        if (deleter)
+            deleter.running = true;
     }
 
     Component {
@@ -491,11 +566,18 @@ PluginComponent {
                 } catch (e) {
                     data = null;
                 }
-                if (data && cNewPath && path !== cNewPath) {
+                if (data && Array.isArray(data.lines)) {
+                    // 旧缓存可能带时间轴为 0 的作词/作曲信息；读取时统一去掉
+                    data.lines = data.lines.filter(function (line) {
+                        return !(line && typeof line.text === "string" && root._isCreditLine(line.text));
+                    });
+                }
+                if (data && cNewPath && path !== cNewPath && root._validLyricsLines(data.lines)) {
                     // 命中的是旧 hash 名缓存：迁移一份到新可读名
                     console.info("[Lyrics] 迁移缓存: " + _cacheDir + "/" + _cacheKey(cTitle, cArtist) + " → 可读名");
                     root.writeToCache(cTitle, cArtist, data.lines, data.source,
-                                      typeof data.offset === "number" ? data.offset : 0);
+                                      typeof data.offset === "number" ? data.offset : 0,
+                                      root._cacheIsPlain(data));
                 }
                 if (cb) cb(data);
                 destroy();
@@ -518,6 +600,7 @@ PluginComponent {
             property var cLines
             property int cSource
             property real cOffset: 0
+            property bool cPlain: false
 
             blockWrites: false
             atomicWrites: true
@@ -527,7 +610,8 @@ PluginComponent {
                     lines: cLines,
                     source: cSource,
                     cachedAt: new Date().toISOString(),
-                    offset: cOffset
+                    offset: cOffset,
+                    plain: cPlain
                 }));
             }
 
@@ -575,40 +659,64 @@ PluginComponent {
 
         var capturedTitle = currentTitle;
         var capturedArtist = currentArtist;
+        var requestToken = ++root._fetchToken;
 
         // 优先级1：自定义API
-        if (customApiEnabled && customApiUrl) {
-            _fetchFromCustomApi(capturedTitle, capturedArtist);
+        if (customApiEnabled && customApiUrl.trim() !== "") {
+            // 自定义 API 每次都会重新请求，先从缓存恢复这首歌的手动偏移
+            _restoreCachedOffsetAndThen(capturedTitle, capturedArtist, requestToken, function () {
+                if (!root._isCurrentRequest(capturedTitle, capturedArtist, requestToken)) return;
+                root._fetchFromCustomApi(capturedTitle, capturedArtist, requestToken);
+            });
             return;
         }
 
         // 优先级2：缓存
         if (cachingEnabled) {
-            _tryCacheThenFetch(capturedTitle, capturedArtist);
+            _tryCacheThenFetch(capturedTitle, capturedArtist, requestToken);
         } else {
             cacheStatus = status.cacheDisabled;
-            _startFetchFromSources(capturedTitle, capturedArtist);
+            _startFetchFromSources(capturedTitle, capturedArtist, requestToken);
         }
     }
-    function _tryCacheThenFetch(title, artist) {
+    function _restoreCachedOffsetAndThen(title, artist, token, callback) {
+        if (!cachingEnabled) {
+            callback();
+            return;
+        }
         readFromCache(title, artist, function (cached) {
-            // 守卫：歌曲已切换
-            if (title !== root._lastFetchedTrack || artist !== root._lastFetchedArtist) return;
+            if (!root._isCurrentRequest(title, artist, token)) return;
+            if (cached && typeof cached.offset === "number" && isFinite(cached.offset)) {
+                root._suppressOffsetSave = true;
+                root.lyricsOffset = cached.offset;
+                root._suppressOffsetSave = false;
+            }
+            callback();
+        });
+    }
+    function _tryCacheThenFetch(title, artist, token) {
+        readFromCache(title, artist, function (cached) {
+            // 守卫：歌曲或请求代次已变化
+            if (!root._isCurrentRequest(title, artist, token)) return;
 
-            if (cached?.lines?.length > 0) {
-                _applyCachedLyrics(cached, title, artist);
+            if (root._validLyricsLines(cached?.lines)) {
+                _applyCachedLyrics(cached, title, artist, token);
                 return;
             }
 
             root.cacheStatus = status.cacheMiss;
-            if (!root.onlineSourcesEnabled) {
+            if (!root.builtinSourcesEnabled) {
                 root._setFinalNotFound(status.notFound);
                 return;
             }
-            _startFetchFromSources(title, artist);
+            _startFetchFromSources(title, artist, token);
         });
     }
-    function _applyCachedLyrics(cached, title, artist) {
+    function _applyCachedLyrics(cached, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
+        if (!root._validLyricsLines(cached?.lines)) return;
+        root._suppressOffsetSave = true;
+        root.lyricsArePlain = root._cacheIsPlain(cached);
         root.lyricsLines = cached.lines;
         root.lyricStatus = lyricState.synced;
         root.lyricSource = cached.source > 0 ? cached.source : lyricSrc.cache;
@@ -618,20 +726,23 @@ PluginComponent {
         root._lastSyncedTrack = title;
         root._lastSyncedArtist = artist;
         // 恢复偏移量
-        if (typeof cached.offset === "number")
-            root.lyricsOffset = cached.offset;
-        console.info("[Lyrics] ✓ 缓存: 已加载 \"" + title + "\" 的歌词 (" + cached.lines.length + " 行)");
+        root.lyricsOffset = (typeof cached.offset === "number" && isFinite(cached.offset))
+            ? cached.offset : 0;
+        root._suppressOffsetSave = false;
+        console.info("[Lyrics] ✓ 缓存: 已加载 \"" + title + "\" 的歌词 ("
+                     + cached.lines.length + " 行" + (root.lyricsArePlain ? ", 纯文本" : "") + ")");
     }
-    function _startFetchFromSources(title, artist) {
-        if (!root.onlineSourcesEnabled) {
+    function _startFetchFromSources(title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
+        if (!root.builtinSourcesEnabled) {
             root._setFinalNotFound(status.notFound);
             return;
         }
         if (neteaseEnabled) {
-            _fetchFromNetease(title, artist);
+            _fetchFromNetease(title, artist, token);
         } else {
-            lrclibStatus = status.skippedConfig;
-            _fetchFromLrclib(title, artist);
+            neteaseStatus = status.skippedConfig;
+            _fetchFromLrclib(title, artist, token);
         }
     }
     function _logSongChange() {
@@ -641,36 +752,66 @@ PluginComponent {
         console.info("[Lyrics] ▶ 歌曲切换: \"" + currentTitle + "\" - " + currentArtist +
                     (currentAlbum ? " [" + currentAlbum + "]" : "") + " (" + durationStr + ")");
     }
+    function _redactUrl(url) {
+        // 只保留协议和主机名；路径、userinfo、查询参数和片段都可能携带 token
+        var match = String(url || "").match(/^(https?:\/\/)([^\/?#\s]*)(.*)$/i);
+        if (!match)
+            return "<redacted>";
+        var authority = match[2];
+        var at = authority.lastIndexOf("@");
+        var host = at !== -1 ? authority.slice(at + 1) : authority;
+        return match[1] + host + "/<redacted>";
+    }
+    function _redactText(text) {
+        // 错误信息偶尔会带完整 URL，统一做脱敏
+        return String(text || "").replace(/https?:\/\/[^\s"'<>]+/gi, function (url) {
+            return _redactUrl(url);
+        });
+    }
     function _xhrRequest(url, method, timeoutMs, onSuccess, onError, customHeaders, postData) {
         const MAX_RETRIES = 2;
         const RETRY_DELAY = 3000;
 
+        var requestId = ++root._xhrRequestSeq;
+        root._activeXhrRequest = requestId;
         var retriesLeft = MAX_RETRIES;
-        var attempt = 0;
         var cancelled = false;
         var currentXhr = null;
-        var httpMethod = method || "GET";
+        var httpMethod = (method || "GET").toUpperCase();
+        if (httpMethod !== "GET" && httpMethod !== "POST")
+            httpMethod = "GET";
 
+        function _isActive() {
+            return !cancelled && root._activeXhrRequest === requestId;
+        }
+        function _finish() {
+            if (root._activeXhrRequest === requestId)
+                root._activeXhrRequest = 0;
+            xhrTimeoutTimer.stop();
+            xhrRetryTimer.stop();
+        }
         function _attempt() {
-            attempt++;
+            if (!_isActive()) return;
             currentXhr = new XMLHttpRequest();
             var done = false;
 
-            // 设置超时
+            // 设置超时；ownerId 防止旧请求触发新请求的定时器
             xhrTimeoutTimer.stop();
+            xhrTimeoutTimer.ownerId = requestId;
             xhrTimeoutTimer.interval = timeoutMs;
             xhrTimeoutTimer.onTimeout = function () {
-                if (!done && !cancelled) {
-                    done = true;
-                    currentXhr.abort();
-                    _retry("timeout");
-                }
+                if (xhrTimeoutTimer.ownerId !== requestId || !_isActive() || done)
+                    return;
+                done = true;
+                currentXhr.abort();
+                _retry("timeout");
             };
             xhrTimeoutTimer.start();
 
             // 状态处理
             currentXhr.onreadystatechange = function () {
-                if (currentXhr.readyState !== XMLHttpRequest.DONE || done || cancelled) return;
+                if (!_isActive() || currentXhr.readyState !== XMLHttpRequest.DONE || done)
+                    return;
 
                 done = true;
                 xhrTimeoutTimer.stop();
@@ -686,48 +827,79 @@ PluginComponent {
                     return;
                 }
 
+                _finish();
                 onSuccess(currentXhr.responseText, currentXhr.status);
             };
 
             // 发送请求
-            currentXhr.open(httpMethod, url);
+            try {
+                currentXhr.open(httpMethod, url);
 
-            if (customHeaders) {
-                for (var key in customHeaders) {
-                    currentXhr.setRequestHeader(key, customHeaders[key]);
+                if (customHeaders) {
+                    for (var key in customHeaders) {
+                        currentXhr.setRequestHeader(key, customHeaders[key]);
+                    }
+                } else {
+                    currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.4");
+                    currentXhr.setRequestHeader("Accept", "application/json");
                 }
-            } else {
-                currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.3");
-                currentXhr.setRequestHeader("Accept", "application/json");
-            }
 
-            if (httpMethod === "POST" && postData) {
-                currentXhr.setRequestHeader("Content-Type", "application/json");
-                currentXhr.send(JSON.stringify(postData));
-            } else {
-                currentXhr.send();
+                if (httpMethod === "POST" && postData) {
+                    currentXhr.setRequestHeader("Content-Type", "application/json");
+                    currentXhr.send(JSON.stringify(postData));
+                } else {
+                    currentXhr.send();
+                }
+            } catch (e) {
+                if (done)
+                    return;
+                done = true;
+                _finish();
+                var errorText = "请求异常: " + e;
+                // 延迟回调，避免调用方还没拿到 cancel 函数就同步启动回退请求
+                Qt.callLater(function () {
+                    if (!cancelled)
+                        onError(errorText);
+                });
             }
         }
 
         function _retry(errMsg) {
-            if (cancelled) return;
+            if (!_isActive()) return;
 
             if (retriesLeft > 0) {
                 retriesLeft--;
-                console.warn("[Lyrics] 请求失败，重试中 (" + (MAX_RETRIES - retriesLeft) + "/" + MAX_RETRIES + "): " + url);
+                console.warn("[Lyrics] 请求失败，重试中 (" + (MAX_RETRIES - retriesLeft) + "/" + MAX_RETRIES + "): " + _redactUrl(url));
                 xhrRetryTimer.stop();
+                xhrRetryTimer.ownerId = requestId;
                 xhrRetryTimer.interval = RETRY_DELAY;
-                xhrRetryTimer.onRetry = _attempt;
+                xhrRetryTimer.onRetry = function () {
+                    if (xhrRetryTimer.ownerId !== requestId || !_isActive())
+                        return;
+                    _attempt();
+                };
                 xhrRetryTimer.start();
             } else {
+                _finish();
                 onError(errMsg);
             }
+        }
+
+        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+            _finish();
+            Qt.callLater(function () {
+                if (!cancelled)
+                    onError("无效的请求地址");
+            });
+            return function () { cancelled = true; };
         }
 
         _attempt();
 
         return function cancel() {
             cancelled = true;
+            if (root._activeXhrRequest === requestId)
+                root._activeXhrRequest = 0;
             xhrTimeoutTimer.stop();
             xhrRetryTimer.stop();
             if (currentXhr) currentXhr.abort();
@@ -739,7 +911,8 @@ PluginComponent {
     }
     // 歌词源：lrclib.net
 
-    function _fetchFromLrclib(expectedTitle, expectedArtist) {
+    function _fetchFromLrclib(expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
         if (!_checkSourceEnabled("lrclib", lrclibEnabled, neteaseEnabled)) return;
         if (_checkAlreadySynced("lrclib")) return;
 
@@ -750,10 +923,10 @@ PluginComponent {
 
         root._cancelActiveFetch = _xhrGet(url, 20000,
             function (responseText, httpStatus) {
-                _handleLrclibResponse(responseText, expectedTitle, expectedArtist);
+                _handleLrclibResponse(responseText, expectedTitle, expectedArtist, token);
             },
             function (errMsg) {
-                _handleLrclibError(errMsg, expectedTitle, expectedArtist);
+                _handleLrclibError(errMsg, expectedTitle, expectedArtist, token);
             }
         );
     }
@@ -766,10 +939,12 @@ PluginComponent {
         return url;
     }
 
-    function _handleLrclibResponse(responseText, expectedTitle, expectedArtist) {
+    function _handleLrclibResponse(responseText, expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
+
         var rawData = (responseText || "").trim();
         if (rawData.length === 0) {
-            _fallbackAfterLrclib(status.error, "空响应", expectedTitle, expectedArtist);
+            _fallbackAfterLrclib(status.error, "空响应", expectedTitle, expectedArtist, token);
             return;
         }
 
@@ -777,49 +952,49 @@ PluginComponent {
             var result = JSON.parse(rawData);
 
             if (result.statusCode === 404 || result.error) {
-                _fallbackAfterLrclib(status.notFound, "未找到", expectedTitle, expectedArtist);
+                _fallbackAfterLrclib(status.notFound, "未找到", expectedTitle, expectedArtist, token);
                 return;
             }
 
-            if (result.syncedLyrics) {
-                _applyLyricsFromSource(result.syncedLyrics, lyricSrc.lrclib, expectedTitle, expectedArtist);
+            if (result.syncedLyrics
+                    && _applyLyricsFromSource(result.syncedLyrics, lyricSrc.lrclib,
+                                              expectedTitle, expectedArtist, token))
                 return;
-            }
 
-            if (result.plainLyrics) {
-                var plainLines = _plainTextToLines(result.plainLyrics);
-                if (plainLines.length > 0) {
-                    _applyLyricsLines(plainLines, lyricSrc.lrclib, expectedTitle, expectedArtist);
-                    return;
-                }
-            }
+            if (result.plainLyrics
+                    && _applyPlainLyrics(result.plainLyrics, lyricSrc.lrclib,
+                                         expectedTitle, expectedArtist, token))
+                return;
 
-            _fallbackAfterLrclib(status.notFound, "无歌词数据", expectedTitle, expectedArtist);
+            _fallbackAfterLrclib(status.notFound, "无歌词数据", expectedTitle, expectedArtist, token);
 
         } catch (e) {
-            _fallbackAfterLrclib(status.error, "解析失败: " + e, expectedTitle, expectedArtist);
+            _fallbackAfterLrclib(status.error, "解析失败: " + e, expectedTitle, expectedArtist, token);
         }
     }
 
-    function _handleLrclibError(errMsg, expectedTitle, expectedArtist) {
+    function _handleLrclibError(errMsg, expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
         console.warn("[Lyrics] lrclib: 请求失败 — " + errMsg);
-        _fallbackAfterLrclib(status.error, errMsg, expectedTitle, expectedArtist);
+        _fallbackAfterLrclib(status.error, errMsg, expectedTitle, expectedArtist, token);
     }
 
-    function _fallbackAfterLrclib(statusVal, reason, title, artist) {
+    function _fallbackAfterLrclib(statusVal, reason, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
         lrclibStatus = statusVal;
         console.info("[Lyrics] lrclib: " + reason + " - \"" + title + "\"");
 
         // 仅在网易云尚未尝试过时回退；否则两个源会无限互相重试。
         if (neteaseEnabled && neteaseStatus === status.none) {
-            _fetchFromNetease(title, artist);
+            _fetchFromNetease(title, artist, token);
         } else {
             _setFinalNotFound(statusVal);
         }
     }
     // 歌词源：网易云音乐
 
-    function _fetchFromNetease(expectedTitle, expectedArtist) {
+    function _fetchFromNetease(expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
         if (!_checkSourceEnabled("netease", neteaseEnabled, false)) {
             _setFinalNotFound(status.notFound);
             return;
@@ -827,10 +1002,13 @@ PluginComponent {
         if (_checkAlreadySynced("netease")) return;
 
         neteaseStatus = status.searching;
-        console.info("[Lyrics] 网易云: 搜索 \"" + expectedTitle + "\"");
+        console.info("[Lyrics] 网易云: 搜索 \"" + expectedTitle
+                     + (expectedArtist ? " - " + expectedArtist : "") + "\"");
 
+        // 带上歌手搜索并多取几条结果，再在本地做标题/歌手/专辑匹配
+        var searchTerm = expectedArtist ? expectedTitle + " " + expectedArtist : expectedTitle;
         var searchUrl = "https://music.163.com/api/search/get/web?csrf_token=&hlpretag=&hlposttag=&s="
-                      + encodeURIComponent(expectedTitle) + "&type=1&offset=0&total=true&limit=2";
+                      + encodeURIComponent(searchTerm) + "&type=1&offset=0&total=true&limit=10";
 
         var customHeaders = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
@@ -840,21 +1018,21 @@ PluginComponent {
 
         root._cancelActiveFetch = _xhrRequest(searchUrl, "GET", 15000,
             function (responseText, httpStatus) {
-                _handleNeteaseSearchResponse(responseText, expectedTitle, expectedArtist);
+                _handleNeteaseSearchResponse(responseText, expectedTitle, expectedArtist, token);
             },
             function (errMsg) {
-                _handleNeteaseError("搜索失败: " + errMsg, expectedTitle, expectedArtist);
+                _handleNeteaseError("搜索失败: " + errMsg, expectedTitle, expectedArtist, token);
             },
             customHeaders
         );
     }
 
-    function _handleNeteaseSearchResponse(responseText, expectedTitle, expectedArtist) {
-        if (!_isCurrentTrack(expectedTitle, expectedArtist)) return;
+    function _handleNeteaseSearchResponse(responseText, expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
 
         var rawData = (responseText || "").trim();
         if (rawData.length === 0) {
-            _handleNeteaseError("空搜索响应", expectedTitle);
+            _handleNeteaseError("空搜索响应", expectedTitle, expectedArtist, token);
             return;
         }
 
@@ -862,27 +1040,44 @@ PluginComponent {
             var result = JSON.parse(rawData);
             var songs = result?.result?.songs;
 
-            if (!songs || songs.length === 0) {
-                _handleNeteaseError("未找到歌曲", expectedTitle, expectedArtist);
+            if (!Array.isArray(songs) || songs.length === 0) {
+                _handleNeteaseError("未找到歌曲", expectedTitle, expectedArtist, token);
                 return;
             }
 
-            var matchedSong = _findBestMatch(songs, expectedTitle, currentAlbum);
+            var matchedSong = _findBestMatch(songs, expectedTitle, expectedArtist, currentAlbum);
+            if (!matchedSong) {
+                _handleNeteaseError("未找到标题和歌手匹配的歌曲", expectedTitle, expectedArtist, token);
+                return;
+            }
             var songId = matchedSong.id;
             var songName = matchedSong.name;
-            var artistName = matchedSong.artists?.[0]?.name || "未知";
+            var artistList = matchedSong.artists;
+            if (!Array.isArray(artistList) || artistList.length === 0)
+                artistList = matchedSong.ar;
+            if (!Array.isArray(artistList))
+                artistList = [];
+            var artistName = artistList
+                .map(function (a) { return (a && a.name) || ""; })
+                .filter(function (n) { return n !== ""; })
+                .join(" / ") || "未知";
+
+            if (songId === undefined || songId === null || songId === "") {
+                _handleNeteaseError("歌曲 ID 无效", expectedTitle, expectedArtist, token);
+                return;
+            }
 
             console.info("[Lyrics] 网易云: 匹配 \"" + songName + "\" - " + artistName);
 
-            _fetchNeteaseLyrics(songId, expectedTitle, expectedArtist, songName, artistName);
+            _fetchNeteaseLyrics(songId, expectedTitle, expectedArtist, songName, artistName, token);
 
         } catch (e) {
-            _handleNeteaseError("解析失败: " + e, expectedTitle);
+            _handleNeteaseError("解析失败: " + e, expectedTitle, expectedArtist, token);
         }
     }
 
-    function _fetchNeteaseLyrics(songId, expectedTitle, expectedArtist, matchedName, matchedArtist) {
-        if (!_isCurrentTrack(expectedTitle, expectedArtist)) return;
+    function _fetchNeteaseLyrics(songId, expectedTitle, expectedArtist, matchedName, matchedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
 
         // Query NetEase directly instead of routing the song id through a third-party proxy.
         var lyricUrl = "https://music.163.com/api/song/lyric?id=" + encodeURIComponent(songId)
@@ -896,21 +1091,23 @@ PluginComponent {
 
         root._cancelActiveFetch = _xhrGet(lyricUrl, 15000,
             function (responseText, httpStatus) {
-                _handleNeteaseLyricResponse(responseText, expectedTitle, expectedArtist, matchedName, matchedArtist);
+                _handleNeteaseLyricResponse(responseText, expectedTitle, expectedArtist,
+                                            matchedName, matchedArtist, token);
             },
             function (errMsg) {
-                _handleNeteaseError("歌词请求失败: " + errMsg, expectedTitle, expectedArtist);
+                _handleNeteaseError("歌词请求失败: " + errMsg, expectedTitle, expectedArtist, token);
             },
             customHeaders
         );
     }
 
-    function _handleNeteaseLyricResponse(responseText, expectedTitle, expectedArtist, matchedName, matchedArtist) {
-        if (!_isCurrentTrack(expectedTitle, expectedArtist)) return;
+    function _handleNeteaseLyricResponse(responseText, expectedTitle, expectedArtist,
+                                         matchedName, matchedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
 
         var rawData = (responseText || "").trim();
         if (rawData.length === 0) {
-            _handleNeteaseError("空搜索响应", expectedTitle, expectedArtist);
+            _handleNeteaseError("空搜索响应", expectedTitle, expectedArtist, token);
             return;
         }
 
@@ -918,26 +1115,32 @@ PluginComponent {
             var result = JSON.parse(rawData);
 
             var lyricText = result.lrc?.lyric || result.lyric || "";
-            if (lyricText.trim() === "") {
-                _handleNeteaseError("该歌曲无歌词", expectedTitle, expectedArtist);
+            if (typeof lyricText !== "string" || lyricText.trim() === "") {
+                _handleNeteaseError("该歌曲无歌词", expectedTitle, expectedArtist, token);
                 return;
             }
 
             var lines = parseLrc(lyricText);
-            if (lines.length === 0) {
-                _handleNeteaseError("LRC解析失败", expectedTitle, expectedArtist);
+            if (lines.length > 0) {
+                _applyLyricsLines(lines, lyricSrc.netease, expectedTitle, expectedArtist, false, token);
+                console.info("[Lyrics] 网易云: 匹配 \"" + matchedName + "\" - " + matchedArtist);
                 return;
             }
 
-            _applyLyricsLines(lines, lyricSrc.netease, expectedTitle, expectedArtist);
-            console.info("[Lyrics] 网易云: 匹配 \"" + matchedName + "\" - " + matchedArtist);
+            if (_applyPlainLyrics(lyricText, lyricSrc.netease, expectedTitle, expectedArtist, token)) {
+                console.info("[Lyrics] 网易云: 匹配 \"" + matchedName + "\" - " + matchedArtist + " (纯文本)");
+                return;
+            }
+
+            _handleNeteaseError("LRC解析失败", expectedTitle, expectedArtist, token);
 
         } catch (e) {
-            _handleNeteaseError("解析失败: " + e, expectedTitle, expectedArtist);
+            _handleNeteaseError("解析失败: " + e, expectedTitle, expectedArtist, token);
         }
     }
 
-    function _handleNeteaseError(reason, title, artist) {
+    function _handleNeteaseError(reason, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
         neteaseStatus = status.error;
         console.warn("[Lyrics] 网易云: " + reason + " - \"" + title + "\"");
 
@@ -945,44 +1148,58 @@ PluginComponent {
         // 否则两个源失败后会互相回调，形成无限请求循环。
         if (lrclibEnabled && lrclibStatus === status.none) {
             console.info("[Lyrics] 网易云失败，尝试 lrclib...");
-            _fetchFromLrclib(title, artist);
+            _fetchFromLrclib(title, artist, token);
         } else {
             _setFinalNotFound(status.error);
         }
     }
     // 歌词源：自定义 API
 
-    function _fetchFromCustomApi(expectedTitle, expectedArtist) {
+    function _fetchFromCustomApi(expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
+
+        var apiBase = customApiUrl.trim();
+        if (!/^https?:\/\//i.test(apiBase)) {
+            _fallbackToBuiltin("URL 无效", expectedTitle, expectedArtist, token);
+            return;
+        }
+
         console.info("[Lyrics] 自定义API: 获取 \"" + expectedTitle + "\"");
 
-        var url = customApiUrl
+        var url = apiBase
             .replace(/{title}/g, encodeURIComponent(expectedTitle))
             .replace(/{artist}/g, encodeURIComponent(expectedArtist))
             .replace(/{album}/g, encodeURIComponent(currentAlbum || ""));
+        var method = (customApiMethod || "GET").toUpperCase();
+        if (method !== "GET" && method !== "POST")
+            method = "GET";
 
-        var postData = customApiMethod === "POST" ? {
+        var postData = method === "POST" ? {
             title: expectedTitle,
             artist: expectedArtist,
             album: currentAlbum || ""
         } : null;
 
-        root._cancelActiveFetch = _xhrRequest(url, customApiMethod, 20000,
+        root._cancelActiveFetch = _xhrRequest(url, method, 20000,
             function (responseText, httpStatus) {
-                _handleCustomApiResponse(responseText, expectedTitle, expectedArtist);
+                _handleCustomApiResponse(responseText, expectedTitle, expectedArtist, token);
             },
             function (errMsg) {
-                console.warn("[Lyrics] 自定义API: 失败 - " + errMsg);
-                _fetchFromCacheOrBuiltin(expectedTitle, expectedArtist);
+                if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
+                console.warn("[Lyrics] 自定义API: 失败 - " + _redactText(errMsg));
+                _fetchFromCacheOrBuiltin(expectedTitle, expectedArtist, token);
             },
             null,
             postData
         );
     }
 
-    function _handleCustomApiResponse(responseText, expectedTitle, expectedArtist) {
+    function _handleCustomApiResponse(responseText, expectedTitle, expectedArtist, token) {
+        if (!root._isCurrentRequest(expectedTitle, expectedArtist, token)) return;
+
         var rawData = (responseText || "").trim();
         if (rawData.length === 0) {
-            _fallbackToBuiltin("空歌词响应", expectedTitle, expectedArtist);
+            _fallbackToBuiltin("空歌词响应", expectedTitle, expectedArtist, token);
             return;
         }
 
@@ -990,54 +1207,54 @@ PluginComponent {
             var result = JSON.parse(rawData);
             var lyricText = result.lyrics || result.lyric || result.lrc || result.content || result.data;
 
-            if (!lyricText || lyricText.trim() === "") {
-                _fallbackToBuiltin("响应中无歌词", expectedTitle, expectedArtist);
+            if (!lyricText || typeof lyricText !== "string" || lyricText.trim() === "") {
+                _fallbackToBuiltin("响应中无歌词", expectedTitle, expectedArtist, token);
                 return;
             }
 
-            var lines = parseLrc(lyricText);
-            if (lines.length === 0) {
-                lines = _plainTextToLines(lyricText);
-            }
-
-            if (lines.length === 0) {
-                _fallbackToBuiltin("解析失败", expectedTitle, expectedArtist);
+            if (_applyLyricsFromSource(lyricText, lyricSrc.custom, expectedTitle, expectedArtist, token))
                 return;
-            }
+            if (_applyPlainLyrics(lyricText, lyricSrc.custom, expectedTitle, expectedArtist, token))
+                return;
 
-            _applyLyricsLines(lines, lyricSrc.custom, expectedTitle, expectedArtist);
+            _fallbackToBuiltin("解析失败", expectedTitle, expectedArtist, token);
 
         } catch (e) {
-            _fallbackToBuiltin("解析失败: " + e, expectedTitle, expectedArtist);
+            _fallbackToBuiltin("解析失败: " + e, expectedTitle, expectedArtist, token);
         }
     }
 
-    function _fallbackToBuiltin(reason, title, artist) {
+    function _fallbackToBuiltin(reason, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
         console.warn("[Lyrics] 自定义API: " + reason + "，回退到内置源");
-        _fetchFromCacheOrBuiltin(title, artist);
+        _fetchFromCacheOrBuiltin(title, artist, token);
     }
 
-    function _fetchFromCacheOrBuiltin(title, artist) {
+    function _fetchFromCacheOrBuiltin(title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return;
         if (cachingEnabled) {
             readFromCache(title, artist, function (cached) {
-                if (cached?.lines?.length > 0) {
-                    _applyCachedLyrics(cached, title, artist);
+                if (!root._isCurrentRequest(title, artist, token)) return;
+                if (root._validLyricsLines(cached?.lines)) {
+                    _applyCachedLyrics(cached, title, artist, token);
                     return;
                 }
                 root.cacheStatus = status.cacheMiss;
-                if (!root.onlineSourcesEnabled) {
+                if (!root.builtinSourcesEnabled) {
                     root._setFinalNotFound(status.notFound);
                     return;
                 }
-                _fetchFromLrclib(title, artist);
+                // 缓存未命中后按正常顺序继续（网易云 → lrclib），
+                // 不能直接跳到 lrclib 而跳过网易云。
+                _startFetchFromSources(title, artist, token);
             });
         } else {
             cacheStatus = status.cacheDisabled;
-            if (!root.onlineSourcesEnabled) {
+            if (!root.builtinSourcesEnabled) {
                 root._setFinalNotFound(status.notFound);
                 return;
             }
-            _fetchFromLrclib(title, artist);
+            _startFetchFromSources(title, artist, token);
         }
     }
     // 歌词处理辅助函数
@@ -1063,84 +1280,154 @@ PluginComponent {
     }
 
     function _isCurrentTrack(title, artist) {
-        return title === root._lastFetchedTrack && artist === root._lastFetchedArtist;
+        // 既检查已发起的请求，也检查当前 MPRIS 曲目，避免换歌防抖期间
+        // 旧请求的回调把上一首歌词写到新曲目上。
+        return title === root._lastFetchedTrack
+            && artist === root._lastFetchedArtist
+            && title === root.currentTitle
+            && artist === root.currentArtist;
     }
-    function _findBestMatch(songs, expectedTitle, expectedAlbum) {
+    function _isCurrentRequest(title, artist, token) {
+        // 同一首歌可能因清缓存/重新搜索而发起多次请求，必须同时校验代次。
+        return token === root._fetchToken && root._isCurrentTrack(title, artist);
+    }
+    function _findBestMatch(songs, expectedTitle, expectedArtist, expectedAlbum) {
+        if (!Array.isArray(songs) || songs.length === 0)
+            return null;
         function normalize(str) {
             if (!str) return "";
-            return str.toLowerCase().replace(/\s+/g, "");
+            return String(str).toLowerCase()
+                .replace(/[\(（\[【].*?[\)）\]】]/g, "")
+                .replace(/[\s\-_/.,，。·'’"“”]+/g, "");
+        }
+        function songArtistText(song) {
+            var list = song.artists;
+            if (!Array.isArray(list) || list.length === 0)
+                list = song.ar || [];
+            if (typeof list === "string")
+                return list;
+            if (!Array.isArray(list))
+                return "";
+            var names = [];
+            for (var i = 0; i < list.length; i++) {
+                var a = list[i];
+                var n = a && (a.name || a);
+                if (n) names.push(String(n));
+            }
+            return names.join(" / ");
+        }
+        function artistMatches(expected, actual) {
+            var e = normalize(expected);
+            var a = normalize(actual);
+            if (!e) return true;
+            // 结果没有歌手信息时只能依赖标题；有歌手信息则必须匹配
+            if (!a) return true;
+            return a === e || a.indexOf(e) !== -1 || e.indexOf(a) !== -1;
         }
 
-        var normalizedExpected = normalize(expectedTitle);
-        var normalizedExpectedAlbum = normalize(expectedAlbum);
+        var nTitle = normalize(expectedTitle);
+        var nArtist = normalize(expectedArtist);
+        var nAlbum = normalize(expectedAlbum);
+        var best = null;
+        var bestScore = -1;
 
-        // 第一优先级：歌曲名完全匹配 + 专辑匹配
-        if (normalizedExpectedAlbum) {
-            for (var i = 0; i < songs.length; i++) {
-                var songAlbum = normalize(songs[i].album?.name || songs[i].album);
-                if (normalize(songs[i].name) === normalizedExpected && 
-                    songAlbum === normalizedExpectedAlbum) {
-                    console.info("[Lyrics] 网易云: 精确匹配(含专辑) \"" + songs[i].name + "\" - \"" + (songs[i].album?.name || songs[i].album) + "\"");
-                    return songs[i];
-                }
+        for (var i = 0; i < songs.length; i++) {
+            var song = songs[i];
+            if (!song || typeof song !== "object")
+                continue;
+            var songName = normalize(song.name);
+            var titleExact = songName !== "" && songName === nTitle;
+            var titleFuzzy = titleExact || (nTitle !== "" && songName !== ""
+                && (songName.indexOf(nTitle) !== -1 || nTitle.indexOf(songName) !== -1));
+            if (!titleFuzzy)
+                continue;
+
+            var actualArtist = songArtistText(song);
+            if (!artistMatches(expectedArtist, actualArtist))
+                continue;
+
+            var actualAlbum = normalize(song.album?.name || song.album);
+            var albumExact = nAlbum !== "" && actualAlbum === nAlbum;
+
+            var score = titleExact ? 50 : 20;
+            if (nArtist && actualArtist && artistMatches(expectedArtist, actualArtist))
+                score += 30;
+            if (albumExact)
+                score += 20;
+            if (titleExact && nArtist && actualArtist)
+                score += 20;
+
+            // 时长接近时优先，避免同名不同版本
+            if (root.currentDuration > 0 && song.duration > 0) {
+                var diff = Math.abs(song.duration / 1000 - root.currentDuration);
+                if (diff <= 3) score += 15;
+                else if (diff > 30) score -= 10;
+            }
+
+            if (score > bestScore) {
+                best = song;
+                bestScore = score;
             }
         }
 
-        // 第二优先级：歌曲名完全匹配（忽略大小写和空格）
-        for (var j = 0; j < songs.length; j++) {
-            if (normalize(songs[j].name) === normalizedExpected) {
-                console.info("[Lyrics] 网易云: 精确匹配 \"" + songs[j].name + "\"");
-                return songs[j];
-            }
+        if (best) {
+            console.info("[Lyrics] 网易云: 匹配 \"" + best.name + "\" - "
+                         + songArtistText(best) + (bestScore >= 80 ? " (精确)" : ""));
+        } else {
+            console.info("[Lyrics] 网易云: 没有标题/歌手同时匹配的结果");
         }
+        return best;
+    }
 
-        // 第三优先级：歌曲名模糊匹配 + 专辑匹配
-        if (normalizedExpectedAlbum) {
-            var lowerExpected = expectedTitle.toLowerCase();
-            for (var k = 0; k < songs.length; k++) {
-                var songNameLower = songs[k].name.toLowerCase();
-                var songAlbum2 = normalize(songs[k].album?.name || songs[k].album);
-                var nameMatches = songNameLower === lowerExpected ||
-                                  songNameLower.indexOf(lowerExpected) !== -1 ||
-                                  lowerExpected.indexOf(songNameLower) !== -1;
-                
-                if (nameMatches && songAlbum2 === normalizedExpectedAlbum) {
-                    console.info("[Lyrics] 网易云: 模糊匹配(含专辑) \"" + songs[k].name + "\" - \"" + (songs[k].album?.name || songs[k].album) + "\"");
-                    return songs[k];
-                }
-            }
-        }
+    function _isLrcMetadataLine(text) {
+        return /^\s*\[[a-zA-Z#]+:.*\]\s*$/.test(text || "");
+    }
 
-        // 第四优先级：忽略大小写的包含匹配
-        var lowerExpected2 = expectedTitle.toLowerCase();
-        for (var m = 0; m < songs.length; m++) {
-            var songNameLower2 = songs[m].name.toLowerCase();
-            if (songNameLower2 === lowerExpected2 ||
-                songNameLower2.indexOf(lowerExpected2) !== -1 ||
-                lowerExpected2.indexOf(songNameLower2) !== -1) {
-                console.info("[Lyrics] 网易云: 模糊匹配 \"" + songs[m].name + "\"");
-                return songs[m];
-            }
-        }
-
-        // 默认返回第一首
-        console.info("[Lyrics] 网易云: 默认匹配 \"" + songs[0].name + "\"");
-        return songs[0];
+    function _isCreditLine(text) {
+        if (!text) return false;
+        var s = String(text).trim();
+        if (!s) return false;
+        // 只过滤带冒号的制作信息，避免误伤以“曲终”“词不达意”等开头的正常歌词
+        if (/^(作词|作曲|编曲|制作人|制作|出品|发行|监制|混音|母带|录音|和声|演唱|原唱|词|曲)\s*[:：]/.test(s))
+            return true;
+        return /^(lyrics?|lyricist|composer|composed|arranger|arranged|producer|mixed|mastered|written|music)\b(?:\s+by)?\s*[:：]/i.test(s);
     }
 
     function _plainTextToLines(plainText) {
+        if (!plainText || typeof plainText !== "string")
+            return [];
         return plainText
-            .split("\n")
+            .split(/\r?\n/)
             .map(function(line) { return { time: 0, text: line.trim() }; })
-            .filter(function(l) { return l.text !== ""; });
+            .filter(function(l) {
+                return l.text !== ""
+                    && !_isLrcMetadataLine(l.text)
+                    && !_isInstrumentalMarker(l.text)
+                    && !_isCreditLine(l.text);
+            });
     }
 
-    function _applyLyricsFromSource(lrcText, source, title, artist) {
+    function _applyLyricsFromSource(lrcText, source, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return false;
         var lines = parseLrc(lrcText);
-        _applyLyricsLines(lines, source, title, artist);
+        if (lines.length === 0) return false;
+        _applyLyricsLines(lines, source, title, artist, false, token);
+        return true;
     }
 
-    function _applyLyricsLines(lines, source, title, artist) {
+    function _applyPlainLyrics(plainText, source, title, artist, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return false;
+        var lines = _plainTextToLines(plainText);
+        if (lines.length === 0) return false;
+        _applyLyricsLines(lines, source, title, artist, true, token);
+        return true;
+    }
+
+    function _applyLyricsLines(lines, source, title, artist, isPlain, token) {
+        if (!root._isCurrentRequest(title, artist, token)) return false;
+        if (!root._validLyricsLines(lines)) return false;
+
+        root.lyricsArePlain = isPlain === true;
         root.lyricsLines = lines;
         root.lyricStatus = lyricState.synced;
         root.lyricSource = source;
@@ -1156,11 +1443,13 @@ PluginComponent {
                         source === lyricSrc.custom ? "自定义API" :
                         source === lyricSrc.embedded ? "内嵌歌词" : "未知";
 
-        console.info("[Lyrics] ✓ " + sourceName + ": 已找到歌词 (" + lines.length + " 行) - \"" + title + "\"");
+        console.info("[Lyrics] ✓ " + sourceName + ": 已找到歌词 (" + lines.length + " 行"
+                     + (root.lyricsArePlain ? ", 纯文本" : "") + ") - \"" + title + "\"");
 
         if (cachingEnabled) {
-            writeToCache(title, artist, lines, source);
+            writeToCache(title, artist, lines, source, root.lyricsOffset, root.lyricsArePlain);
         }
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -1206,7 +1495,6 @@ PluginComponent {
             "bgm",
             "original soundtrack",
             "original sound track",
-            "\bost\b",
             "サウンドトラック",
             "メインテーマ",
             "ピアノソロ",
@@ -1221,38 +1509,64 @@ PluginComponent {
                 return true;
             }
         }
+        // 独立的 OST 缩写，避免把 "ghost" 之类误判为纯音乐；括号和中文也能作为边界
+        if (/(^|[^a-z0-9])ost([^a-z0-9]|$)/.test(hay))
+            return true;
         return false;
     }
 
     function parseLrc(lrcText) {
-        var timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
-        var result = lrcText.split("\n").reduce(function (acc, rawLine) {
-            var line = rawLine.trim();
+        var result = [];
+        if (!lrcText || typeof lrcText !== "string")
+            return result;
+
+        // 支持 [mm:ss]、[mm:ss.x]、[mm:ss.xx]、[mm:ss.xxx] 和 [mm:ss:xx]
+        var tagRegex = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+        var rawLines = String(lrcText).split(/\r?\n/);
+
+        for (var li = 0; li < rawLines.length; li++) {
+            var line = rawLines[li].trim();
             if (!line)
-                return acc;
-            var match = timeRegex.exec(line);
-            if (!match)
-                return acc;
-            var millis = parseInt(match[3]);
-            if (match[3].length === 2)
-                millis *= 10;
+                continue;
 
-            var text = line.replace(/\[\d{2}:\d{2}\.\d{2,3}\]/g, "").trim();
+            var matches = [];
+            var match;
+            tagRegex.lastIndex = 0;
+            while ((match = tagRegex.exec(line)) !== null)
+                matches.push(match);
+            if (matches.length === 0)
+                continue;
 
-            // 跳过纯音乐标记行
-            if (_isInstrumentalMarker(text)) {
-                return acc;
+            var text = line.replace(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g, "").trim();
+            if (!text || _isInstrumentalMarker(text) || _isCreditLine(text))
+                continue;
+
+            // 同一行可以带多个时间戳（如副歌复用），每个都要生成条目
+            for (var mi = 0; mi < matches.length; mi++) {
+                var m = matches[mi];
+                var fraction = m[3] || "";
+                var millis = 0;
+                if (fraction.length === 1)
+                    millis = parseInt(fraction, 10) * 100;
+                else if (fraction.length === 2)
+                    millis = parseInt(fraction, 10) * 10;
+                else if (fraction.length === 3)
+                    millis = parseInt(fraction, 10);
+
+                result.push({
+                    time: parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + millis / 1000,
+                    text: text,
+                    // 保留源顺序，避免同一时间戳的原文/翻译被不稳定排序打乱
+                    _order: result.length
+                });
             }
+        }
 
-            acc.push({
-                time: parseInt(match[1]) * 60 + parseInt(match[2]) + millis / 1000,
-                text: text
-            });
-            return acc;
-        }, []);
         result.sort(function (a, b) {
-            return a.time - b.time;
+            return a.time - b.time || a._order - b._order;
         });
+        for (var ri = 0; ri < result.length; ri++)
+            delete result[ri]._order;
         return result;
     }
 
@@ -1347,13 +1661,19 @@ PluginComponent {
         currentLineIndex = -1;
         _lastRealPos = -1;
         _lastPosStamp = 0;
+        if (lyricsArePlain) {
+            // 纯文本没有时间轴，换曲时先清空，避免短暂显示上一首的正文
+            offsetSaveTimer.stop();
+            lyricsArePlain = false;
+            lyricsLines = [];
+        }
         rebuildDisplayLines();
     }
 
     Timer {
         id: positionTimer
         interval: 200
-        running: isPlaying && lyricsLines.length > 0
+        running: isPlaying && lyricsLines.length > 0 && !lyricsArePlain
         repeat: true
         onTriggered: {
             var now = Date.now() / 1000;
@@ -1378,8 +1698,6 @@ PluginComponent {
 
             var newIndex = -1;
             for (var i = lyricsLines.length - 1; i >= 0; i--) {
-                if (lyricsLines[i].time === 0)
-                    continue;
                 if (adjusted >= lyricsLines[i].time) {
                     newIndex = i;
                     break;
@@ -1430,10 +1748,27 @@ PluginComponent {
             _rebuildCurrentPair();
             return;
         }
+        if (root.lyricsArePlain) {
+            // 纯文本没有时间轴：保留全部可显示行，固定显示首行；居中分栏显示前两行
+            var plainOut = [];
+            for (var p = 0; p < lyricsLines.length; p++) {
+                var plainText = lyricsLines[p].text || "";
+                if (!plainText || _isBlocked(plainText) || _isHeaderLine(plainText))
+                    continue;
+                plainOut.push({ time: 0, text: plainText, src: p });
+            }
+            displayLines = plainOut;
+            var firstSrc = plainOut.length > 0 ? plainOut[0].src : -1;
+            if (currentLineIndex !== firstSrc)
+                currentLineIndex = firstSrc;
+            _syncDisplayIndex();
+            _rebuildCurrentPair();
+            return;
+        }
         var out = [];
         var i = 0;
         while (i < lyricsLines.length) {
-            if (_isBlocked(lyricsLines[i].text) || _isHeaderLine(lyricsLines[i].text) || lyricsLines[i].time === 0) {
+            if (_isBlocked(lyricsLines[i].text) || _isHeaderLine(lyricsLines[i].text)) {
                 i++;
                 continue;
             }
@@ -1510,7 +1845,19 @@ PluginComponent {
     }
 
     function _rebuildCurrentPair() {
-        if (lyricsLines.length === 0 || currentLineIndex < 0) {
+        if (root.lyricsArePlain) {
+            if (displayLines.length === 0) {
+                currentPair = null;
+                return;
+            }
+            currentPair = {
+                orig: displayLines[0].text || "",
+                trans: displayLines.length > 1 ? (displayLines[1].text || "") : ""
+            };
+            return;
+        }
+        if (lyricsLines.length === 0 || currentLineIndex < 0
+                || currentLineIndex >= lyricsLines.length) {
             currentPair = null;
             return;
         }
@@ -1597,7 +1944,7 @@ PluginComponent {
             [status.found]: {
                 color: root._cardAccent,
                 icon: "check_circle",
-                label: root.isEnglish ? "Found - Synced Lyrics" : "已找到 - 同步歌词"
+                label: root.isEnglish ? "Found - Lyrics" : "已找到 - 歌词"
             },
             [status.notFound]: {
                 color: Theme.warning,
@@ -1674,6 +2021,7 @@ PluginComponent {
             readonly property bool infoPaused: root.pausedState
 
             readonly property bool introPhase: root.hasPlayer && root.isPlaying
+                && !root.lyricsArePlain
                 && root.displayLines.length > 0
                 && root._lastRealPos < (root.displayLines[0]?.time ?? 0)
 
