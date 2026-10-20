@@ -4,7 +4,7 @@
 
 **中文** | [English](README_EN.md)
 
-![Version](https://img.shields.io/badge/version-1.7.4-blue)
+![Version](https://img.shields.io/badge/version-1.7.5-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![DMS](https://img.shields.io/badge/DankMaterialShell-1.5+-purple)
 

@@ -283,6 +283,9 @@ PluginComponent {
         fetchDebounceTimer.restart();
     }
     onCurrentArtistChanged: fetchDebounceTimer.restart()
+    // 插件重载/启动时如果播放器已在播放，属性初值不会触发 onCurrentTitleChanged，
+    // 需要主动拉取一次，否则会一直停在“暂无歌词”。
+    Component.onCompleted: fetchDebounceTimer.restart()
     onLyricsOffsetChanged: {
         if (!_suppressOffsetSave && lyricsLines.length > 0
                 && lyricStatus === lyricState.synced)
@@ -368,7 +371,11 @@ PluginComponent {
     }
 
     function _cacheKey(title, artist) {
-        return _fnv1a32((title + "\x00" + artist).toLowerCase());
+        // MPRIS 标题偶尔带首尾空格（例如 "もし君を許せたら "），而内嵌歌词
+        // 导出脚本会对 tag 做 trim。哈希前统一去空格，避免同一首歌命中不到缓存。
+        var t = String(title || "").trim();
+        var a = String(artist || "").trim();
+        return _fnv1a32((t + "\x00" + a).toLowerCase());
     }
 
     function _sanitizeFilename(s) {
@@ -840,7 +847,7 @@ PluginComponent {
                         currentXhr.setRequestHeader(key, customHeaders[key]);
                     }
                 } else {
-                    currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.4");
+                    currentXhr.setRequestHeader("User-Agent", "DankMaterialShell Lyrics/1.7.5");
                     currentXhr.setRequestHeader("Accept", "application/json");
                 }
 
@@ -2075,7 +2082,7 @@ PluginComponent {
                 ? Math.ceil(_clockMetrics.advanceWidth) + 2
                 : Math.max(centerLeftText.implicitWidth, centerRightText.implicitWidth)
 
-            // 宽度完全随内容自适应，不留空位（动画只在文本层做，避免双层滞后导致封面漂移）
+            // 宽度随整行内容自适应；不做逐帧宽度动画，避免换行时胶囊反复重排、抖动
             implicitWidth: centered ? centerLayout.implicitWidth : leftLayout.implicitWidth
             implicitHeight: parent.widgetThickness ?? 44
 
@@ -2234,13 +2241,6 @@ font.pixelSize: hPillRoot.fontSize
                     maximumLineCount: 1
                     elide: root.lyricEllipsis ? Text.ElideRight : Text.ElideNone
                     width: root.lyricEllipsis ? Math.min(hPillRoot.sideWidth, 300) : hPillRoot.sideWidth
-
-                    Behavior on width {
-                        NumberAnimation {
-                            duration: 180
-                            easing.type: Easing.OutCubic
-                        }
-                    }
                     visible: text !== ""
                 }
 
@@ -2269,13 +2269,6 @@ font.pixelSize: hPillRoot.fontSize
                     maximumLineCount: 1
                     elide: root.lyricEllipsis ? Text.ElideRight : Text.ElideNone
                     width: root.lyricEllipsis ? Math.min(hPillRoot.sideWidth, 300) : hPillRoot.sideWidth
-
-                    Behavior on width {
-                        NumberAnimation {
-                            duration: 180
-                            easing.type: Easing.OutCubic
-                        }
-                    }
                     visible: text !== ""
                 }
             }

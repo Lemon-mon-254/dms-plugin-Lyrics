@@ -2,7 +2,7 @@
   "id": "lyricsEmbed",
   "name": "LyricsEmbed",
   "description": "A synced lyrics widget for DMS with embedded-lyric import, multi-source fetching, bilingual split view and per-song offset tuning. 支持内嵌歌词导入的同步歌词插件：多源歌词、双语分栏、偏移微调",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "author": "lemonmon",
   "icon": "lyrics",
   "type": "widget",
